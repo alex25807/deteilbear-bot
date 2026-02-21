@@ -552,6 +552,8 @@ def _schedule_rating(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     """Планирует запрос оценки через RATING_DELAY секунд после последнего сообщения."""
     if not context.job_queue:
         return
+    if context.chat_data.get("rated"):
+        return
     name = f"rating_{chat_id}"
     _cancel_jobs(context.job_queue, name)
     context.job_queue.run_once(
@@ -636,6 +638,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log_new_client(user_id, source)
 
     context.chat_data["history"] = []
+    context.chat_data["rated"] = False
     _cancel_user_timers(context.job_queue, update.effective_chat.id)
 
     if has_consent(user_id):
@@ -722,6 +725,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         rating = int(query.data.split("_")[1])
         log_rating(user_id, rating)
         logger.info("Оценка от %s: %d ⭐", user_id, rating)
+        context.chat_data["rated"] = True
+        _cancel_jobs(context.job_queue, f"rating_{query.message.chat_id}")
         if rating >= 4:
             text = "Спасибо за высокую оценку! 🌟 Рады, что смогли помочь!"
         else:
