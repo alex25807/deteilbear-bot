@@ -533,6 +533,19 @@ def _check_consent(context: ContextTypes.DEFAULT_TYPE, user_id) -> bool:
     return False
 
 
+def _ensure_fresh_session(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """Сбрасывает сессию при наступлении нового дня."""
+    today = dt.date.today().isoformat()
+    if context.chat_data.get("last_active_date") == today:
+        return
+    context.chat_data["history"] = []
+    context.chat_data["rated"] = False
+    context.chat_data["greeted"] = False
+    context.chat_data["last_active_date"] = today
+    _cancel_user_timers(context.job_queue, chat_id)
+    logger.info("Новый день — сессия сброшена для чата %s", chat_id)
+
+
 # ================== ТАЙМЕРЫ: ОЦЕНКА И ПОВТОРНОЕ ВОВЛЕЧЕНИЕ ==================
 def _cancel_jobs(job_queue, name: str) -> None:
     """Отменяет все запланированные задачи с данным именем."""
@@ -639,6 +652,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     context.chat_data["history"] = []
     context.chat_data["rated"] = False
+    context.chat_data["last_active_date"] = dt.date.today().isoformat()
     _cancel_user_timers(context.job_queue, update.effective_chat.id)
 
     if has_consent(user_id):
@@ -742,6 +756,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.message.reply_text(NO_CONSENT_TEXT)
         return
 
+    _ensure_fresh_session(context, query.message.chat_id)
+
     if query.data == "menu_advantages":
         log_button_click(user_id, query.data)
         append_to_history(context, "assistant", ADVANTAGES_ANSWER)
@@ -781,6 +797,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     append_to_history(context, "assistant", answer)
 
     sub_menu = SUB_MENUS.get(query.data)
+    booking_offered = BOOKING_MARKER in answer
     if sub_menu:
         clean_text, _ = extract_booking_marker(answer)
         await query.message.reply_text(
@@ -793,7 +810,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     topic = TOPIC_LABELS.get(query.data, "нашими услугами")
     context.chat_data["last_topic"] = topic
-    _schedule_rating(context, chat_id)
+    if booking_offered:
+        _schedule_rating(context, chat_id)
     _schedule_followup(context, chat_id, user_id, topic)
 
 
@@ -808,6 +826,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _check_consent(context, user_id):
         await update.message.reply_text(NO_CONSENT_TEXT)
         return
+
+    _ensure_fresh_session(context, chat_id)
 
     if not context.chat_data.get("greeted"):
         context.chat_data["greeted"] = True
@@ -838,6 +858,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         append_to_history(context, "user", user_text)
         append_to_history(context, "assistant", ADVANTAGES_ANSWER)
         await send_answer(update.message, ADVANTAGES_ANSWER, force_booking=True)
+        _schedule_rating(context, chat_id)
+        _schedule_followup(context, chat_id, user_id, "нашими преимуществами")
         return
 
     history = get_history(context)
@@ -849,7 +871,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await send_answer(update.message, answer)
 
     topic = context.chat_data.get("last_topic", "нашими услугами")
-    _schedule_rating(context, chat_id)
+    if BOOKING_MARKER in answer:
+        _schedule_rating(context, chat_id)
     _schedule_followup(context, chat_id, user_id, topic)
 
 # ================== КОМАНДЫ ПД ==================
