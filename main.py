@@ -458,6 +458,24 @@ ADVANTAGES_ANSWER = (
     "Записаться можно по кнопке ниже ⬇️"
 )
 
+PRICES_ANSWER = (
+    "Актуальные цены по услугам (стартовые):\n\n"
+    "• Быстрая детейлинг-мойка — от 3 000 ₽\n"
+    "• Комплексная детейлинг-мойка Bearlake — от 8 000 ₽\n"
+    "• Деконтаминация ЛКП — от 6 000 ₽\n"
+    "• Мойка подкапотного пространства — от 9 000 ₽\n"
+    "• Полировка ЛКП (Light Polish) — от 25 000 ₽\n"
+    "• Керамические покрытия — от 5 000 ₽\n"
+    "• Детейлинг чистка интерьера — от 28 000 ₽\n"
+    "• Защитные полиуретановые пленки — от 85 000 ₽\n"
+    "• Бронирование лобового стекла — от 30 000 ₽\n"
+    "• Ремонт трещин и сколов стекла — от 3 500 ₽\n"
+    "• Самообслуживание 24/7 — 700 ₽/час или 900 ₽/час\n\n"
+    "*Цены на услуги мастеров (кроме самообслуживания) зависят "
+    "от габаритов авто: S / M / L.*\n\n"
+    "Для точного расчета по вашему авто — записаться можно по кнопке ниже ⬇️"
+)
+
 # ================== ИНИЦИАЛИЗАЦИЯ OPENAI ==================
 client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
 
@@ -782,6 +800,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         chat_id = query.message.chat_id
         _schedule_rating(context, chat_id)
         _schedule_followup(context, chat_id, user_id, "нашими преимуществами")
+        return
+
+    if query.data in {"menu_prices", "sub_all_prices"}:
+        log_button_click(user_id, query.data)
+        user_text = MENU_PROMPTS.get(query.data, "Какие у вас цены на услуги?")
+        append_to_history(context, "user", user_text)
+        append_to_history(context, "assistant", PRICES_ANSWER)
+        await send_answer(query.message, PRICES_ANSWER, force_booking=True)
+        chat_id = query.message.chat_id
+        _schedule_rating(context, chat_id)
+        _schedule_followup(context, chat_id, user_id, "ценами на услуги")
         return
 
     user_text = MENU_PROMPTS.get(query.data)
