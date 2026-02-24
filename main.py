@@ -3,6 +3,7 @@ import os
 import asyncio
 import time
 import datetime as dt
+import re
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import pathlib
@@ -74,6 +75,7 @@ logger.propagate = False
 # ================== КЛАВИАТУРЫ ==================
 BOOKING_KEYBOARD = InlineKeyboardMarkup([
     [InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/"))],
+    [InlineKeyboardButton("✅ Я записался", callback_data="booking_done")],
 ])
 
 PHONE_LINE = "\n\n📞 Или позвоните администратору: +7 (926) 021-60-00"
@@ -156,6 +158,7 @@ SELF_KEYBOARD = InlineKeyboardMarkup([
 SHOP_KEYBOARD = InlineKeyboardMarkup([
     [
         InlineKeyboardButton("🧴 Что рекомендуете", callback_data="sub_shop_recommend"),
+        InlineKeyboardButton("🏷 Скидки и промокоды", callback_data="sub_shop_discounts"),
     ],
     [
         InlineKeyboardButton("🛒 Магазин на Ozon", url="https://ozon.ru/t/bal1Akq"),
@@ -255,6 +258,7 @@ TOPIC_LABELS = {
     "sub_self_included": "условиями аренды поста",
     "sub_self_rules": "правилами самообслуживания",
     "sub_shop_recommend": "автохимией",
+    "sub_shop_discounts": "скидками в магазине",
     "sub_comfort_food": "перекусами в студии",
     "sub_comfort_wifi": "Wi-Fi и зоной отдыха",
     "sub_comfort_climate": "климатом в студии",
@@ -289,6 +293,7 @@ MENU_PROMPTS = {
     "sub_self_rules": "Какие есть ограничения и правила на посту? Можно ли прийти без записи? Можно ли работать вдвоём?",
     # Подменю: магазин
     "sub_shop_recommend": "Какую автохимию и автокосметику рекомендуете? Какие бренды используете?",
+    "sub_shop_discounts": "Какие скидки и промокоды действуют в магазине?",
     # Подменю: комфорт
     "sub_comfort_food": "Есть ли у вас кофе, чай, перекусы? Можно ли поесть в студии?",
     "sub_comfort_wifi": "Есть ли Wi-Fi? Есть ли зона отдыха? Можно ли оставить вещи?",
@@ -322,7 +327,7 @@ SYSTEM_PROMPT = r"""
 
 # ПРИОРИТЕТЫ
 
-• Всегда включай ссылки — они важны для клиента.
+• Если нужно дать ссылку, не вставляй URL в текст. Пиши короткое название ресурса (например: «Яндекс-карты», «Telegram-канал», «Ozon», «сайт студии») — бот добавит активные кнопки автоматически.
 
 #ПРИВЕТСТВИЕ
 Само приветственное сообщение клиенту отправляет бот.
@@ -463,6 +468,22 @@ PRICES_ANSWER = (
     "Для точного расчета по вашему авто — записаться можно по кнопке ниже ⬇️"
 )
 
+SHOP_RECOMMEND_ANSWER = (
+    "Рекомендуем проверенную профессиональную автохимию:\n\n"
+    "• OPT / Optimum Polymer Technologies\n"
+    "• NXTZEN\n"
+    "• IK\n"
+    "• Rayno Crystal Shield\n\n"
+    "Для покупки используйте кнопки-иконки ниже ⬇️"
+)
+
+SHOP_DISCOUNTS_ANSWER = (
+    "Актуальные скидки:\n\n"
+    "• В офлайн-магазине — 5% для постоянных клиентов\n"
+    "• На Ozon при первом заказе — 5% по промокоду BEARLAKE\n\n"
+    "Актуальные акции также публикуем в Telegram-канале."
+)
+
 # ================== ИНИЦИАЛИЗАЦИЯ OPENAI ==================
 client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
 
@@ -562,6 +583,7 @@ def _ensure_fresh_session(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> N
         return
     context.chat_data["history"] = []
     context.chat_data["rated"] = False
+    context.chat_data["booking_confirmed"] = False
     context.chat_data["greeted"] = False
     context.chat_data["last_active_date"] = today
     _cancel_user_timers(context.job_queue, chat_id)
@@ -586,6 +608,8 @@ def _cancel_user_timers(job_queue, chat_id: int) -> None:
 def _schedule_rating(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     """Планирует запрос оценки через RATING_DELAY секунд после последнего сообщения."""
     if not context.job_queue:
+        return
+    if not context.chat_data.get("booking_confirmed"):
         return
     if context.chat_data.get("rated"):
         return
@@ -674,6 +698,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     context.chat_data["history"] = []
     context.chat_data["rated"] = False
+    context.chat_data["booking_confirmed"] = False
     context.chat_data["last_active_date"] = dt.date.today().isoformat()
     _cancel_user_timers(context.job_queue, update.effective_chat.id)
 
@@ -717,13 +742,101 @@ def extract_booking_marker(text: str) -> tuple[str, bool]:
     return text, False
 
 
+URL_RE = re.compile(r"https?://[^\s)>\]]+")
+MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
+
+
+def _extract_links(text: str) -> tuple[str, list[tuple[str | None, str]]]:
+    """Извлекает URL (в т.ч. markdown-ссылки), удаляя их из текста."""
+    links: list[tuple[str | None, str]] = []
+
+    def md_repl(match: re.Match) -> str:
+        label = match.group(1).strip()
+        url = match.group(2).strip()
+        links.append((label, url))
+        return label
+
+    text = MD_LINK_RE.sub(md_repl, text)
+
+    def url_repl(match: re.Match) -> str:
+        raw = match.group(0)
+        url = raw.rstrip(".,);")
+        if url:
+            links.append((None, url))
+        trailing = raw[len(url):]
+        return trailing
+
+    text = URL_RE.sub(url_repl, text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text, links
+
+
+def _button_from_link(label: str | None, url: str) -> InlineKeyboardButton:
+    """Подбирает кнопку-иконку под известные ссылки."""
+    low = url.lower()
+    if "n1024167.yclients.com" in low:
+        return InlineKeyboardButton(
+            "📅 Записаться онлайн",
+            web_app=WebAppInfo(url="https://n1024167.yclients.com/"),
+        )
+    if "yandex.ru/maps" in low:
+        return InlineKeyboardButton("📍 Яндекс Карты", url=url)
+    if "t.me/bearlake_detailing" in low:
+        return InlineKeyboardButton("🔥 Telegram-канал", url=url)
+    if "ozon.ru" in low:
+        return InlineKeyboardButton("🛒 Ozon", url=url)
+    if "bearlake.clients.site" in low:
+        return InlineKeyboardButton("🏪 Сайт студии", url=url)
+    if "avito.ru" in low:
+        return InlineKeyboardButton("🧾 Avito", url=url)
+    if label:
+        short = label.strip()
+        if len(short) > 22:
+            short = short[:19] + "..."
+        return InlineKeyboardButton(f"🔗 {short}", url=url)
+    return InlineKeyboardButton("🔗 Открыть ссылку", url=url)
+
+
+def _button_key(button: InlineKeyboardButton) -> tuple[str, str, str]:
+    web_app = getattr(button, "web_app", None)
+    if web_app and getattr(web_app, "url", None):
+        return ("web_app", button.text, web_app.url)
+    return ("url", button.text, button.url or "")
+
+
+def _build_reply_markup(
+    show_booking: bool,
+    links: list[tuple[str | None, str]],
+    base_markup: InlineKeyboardMarkup | None = None,
+) -> InlineKeyboardMarkup | None:
+    """Собирает клавиатуру: базовые кнопки + запись + ссылки-иконки."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if base_markup:
+        rows.extend([list(row) for row in base_markup.inline_keyboard])
+    if show_booking:
+        rows.extend([list(row) for row in BOOKING_KEYBOARD.inline_keyboard])
+
+    seen = {_button_key(btn) for row in rows for btn in row}
+    for label, url in links:
+        button = _button_from_link(label, url)
+        key = _button_key(button)
+        if key in seen:
+            continue
+        rows.append([button])
+        seen.add(key)
+
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
 async def send_answer(message, text: str, force_booking: bool = False) -> None:
     """Отправляет ответ, автоматически добавляя кнопки записи при маркере."""
     clean_text, has_marker = extract_booking_marker(text)
+    clean_text, links = _extract_links(clean_text)
     show_booking = has_marker or force_booking
     if show_booking:
         clean_text += PHONE_LINE
-    reply_markup = BOOKING_KEYBOARD if show_booking else None
+    reply_markup = _build_reply_markup(show_booking, links)
     await message.reply_text(
         clean_text,
         reply_markup=reply_markup,
@@ -746,6 +859,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.chat_data["consent"] = True
         context.chat_data["greeted"] = True
         context.chat_data["history"] = []
+        context.chat_data["booking_confirmed"] = False
         greeting = (
             "Спасибо! Согласие принято ✅\n\n"
             "Помогу подобрать услугу, расскажу о ценах "
@@ -755,6 +869,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         append_to_history(context, "assistant", greeting)
         await query.message.reply_text(greeting, reply_markup=GREETING_KEYBOARD)
+        return
+
+    if query.data == "booking_done":
+        context.chat_data["booking_confirmed"] = True
+        context.chat_data["rated"] = False
+        _cancel_jobs(context.job_queue, f"followup_{query.message.chat_id}")
+        _schedule_rating(context, query.message.chat_id)
+        await query.message.reply_text(
+            "Отлично, спасибо! ✅\n"
+            "Через пару минут попрошу коротко оценить консультацию."
+        )
         return
 
     if query.data and query.data.startswith("rate_"):
@@ -785,7 +910,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         append_to_history(context, "assistant", ADVANTAGES_ANSWER)
         await send_answer(query.message, ADVANTAGES_ANSWER, force_booking=True)
         chat_id = query.message.chat_id
-        _schedule_rating(context, chat_id)
         _schedule_followup(context, chat_id, user_id, "нашими преимуществами")
         return
 
@@ -796,8 +920,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         append_to_history(context, "assistant", PRICES_ANSWER)
         await send_answer(query.message, PRICES_ANSWER, force_booking=True)
         chat_id = query.message.chat_id
-        _schedule_rating(context, chat_id)
         _schedule_followup(context, chat_id, user_id, "ценами на услуги")
+        return
+
+    if query.data == "menu_shop":
+        log_button_click(user_id, query.data)
+        append_to_history(context, "assistant", "Выберите раздел магазина по кнопкам ниже ⬇️")
+        await query.message.reply_text(
+            "Выберите раздел магазина по кнопкам ниже ⬇️",
+            reply_markup=SHOP_KEYBOARD,
+            disable_web_page_preview=True,
+        )
+        chat_id = query.message.chat_id
+        _schedule_followup(context, chat_id, user_id, "магазином автохимии")
+        return
+
+    if query.data in {"sub_shop_recommend", "sub_shop_discounts"}:
+        log_button_click(user_id, query.data)
+        user_text = MENU_PROMPTS.get(query.data, "")
+        if user_text:
+            append_to_history(context, "user", user_text)
+        answer = SHOP_RECOMMEND_ANSWER if query.data == "sub_shop_recommend" else SHOP_DISCOUNTS_ANSWER
+        append_to_history(context, "assistant", answer)
+        await query.message.reply_text(
+            answer,
+            reply_markup=SHOP_KEYBOARD,
+            disable_web_page_preview=True,
+        )
+        chat_id = query.message.chat_id
+        topic = TOPIC_LABELS.get(query.data, "магазином автохимии")
+        _schedule_followup(context, chat_id, user_id, topic)
         return
 
     user_text = MENU_PROMPTS.get(query.data)
@@ -830,12 +982,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     append_to_history(context, "assistant", answer)
 
     sub_menu = SUB_MENUS.get(query.data)
-    booking_offered = BOOKING_MARKER in answer
     if sub_menu:
-        clean_text, _ = extract_booking_marker(answer)
+        clean_text, has_marker = extract_booking_marker(answer)
+        clean_text, links = _extract_links(clean_text)
+        reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
         await query.message.reply_text(
             clean_text,
-            reply_markup=sub_menu,
+            reply_markup=reply_markup,
             disable_web_page_preview=True,
         )
     else:
@@ -843,8 +996,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     topic = TOPIC_LABELS.get(query.data, "нашими услугами")
     context.chat_data["last_topic"] = topic
-    if booking_offered:
-        _schedule_rating(context, chat_id)
     _schedule_followup(context, chat_id, user_id, topic)
 
 
@@ -891,7 +1042,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         append_to_history(context, "user", user_text)
         append_to_history(context, "assistant", ADVANTAGES_ANSWER)
         await send_answer(update.message, ADVANTAGES_ANSWER, force_booking=True)
-        _schedule_rating(context, chat_id)
         _schedule_followup(context, chat_id, user_id, "нашими преимуществами")
         return
 
@@ -904,8 +1054,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await send_answer(update.message, answer)
 
     topic = context.chat_data.get("last_topic", "нашими услугами")
-    if BOOKING_MARKER in answer:
-        _schedule_rating(context, chat_id)
     _schedule_followup(context, chat_id, user_id, topic)
 
 # ================== КОМАНДЫ ПД ==================
