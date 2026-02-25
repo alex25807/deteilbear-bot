@@ -4,6 +4,8 @@ import asyncio
 import time
 import datetime as dt
 import re
+import difflib
+import csv
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import pathlib
@@ -470,6 +472,7 @@ STATIC_MENU_ANSWERS = {
     ),
     "sub_self_rules": (
         "Рекомендуем запись заранее.\n"
+        "Арендовать можно на любое количество часов, в том числе на длительный период (посуточно/на несколько дней) по согласованию.\n"
         "Можно работать вдвоем.\n"
         "Первое посещение — по предварительному согласованию с 9:00 до 22:00.\n"
         "Запрещены грязные ремонтные работы и агрессивные жидкости."
@@ -494,6 +497,7 @@ TEXT_INTENT_RULES: list[tuple[tuple[str, ...], str]] = [
     (("подкапот", "двигател"), "sub_engine_wash"),
     (("салон", "химчист", "интерьер"), "sub_interior"),
     (("лобов", "стекл", "бронир"), "sub_glass"),
+    (("несколько дней", "на день", "на сутки", "длительн", "аренд"), "sub_self_rules"),
     (("скол", "трещин"), "sub_chips"),
     (("магазин", "автохим", "ozon"), "menu_shop"),
     (("скидк", "промокод", "акци"), "sub_shop_discounts"),
@@ -503,11 +507,56 @@ TEXT_INTENT_RULES: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
-def _detect_text_intent(text_lower: str) -> str | None:
+def _matches_keyword(text_lower: str, keyword: str) -> bool:
+    """Проверяет keyword без ложных совпадений внутри других слов."""
+    if " " in keyword:
+        return keyword in text_lower
+    pattern = rf"(?<!\w){re.escape(keyword)}\w*"
+    return re.search(pattern, text_lower) is not None
+
+
+INTENT_CLARIFY_LABELS = {
+    "menu_prices": "цены",
+    "menu_address": "адрес и график",
+    "menu_self": "самообслуживание",
+    "sub_self_equip": "оборудование поста",
+    "sub_self_price": "стоимость самообслуживания",
+    "sub_self_included": "что включено в аренду",
+    "sub_self_rules": "правила и длительная аренда",
+    "sub_wash": "мойка",
+    "sub_polish": "полировка",
+    "sub_protection": "защита ЛКП",
+    "sub_decon": "деконтаминация",
+    "sub_engine_wash": "мойка подкапотного пространства",
+    "sub_interior": "уход за салоном",
+    "sub_glass": "бронирование стекла",
+    "sub_chips": "ремонт сколов/трещин",
+    "menu_shop": "магазин автохимии",
+    "sub_shop_discounts": "скидки и промокоды",
+    "menu_comfort": "условия в студии",
+    "menu_portfolio": "примеры работ",
+    "menu_advantages": "преимущества студии",
+}
+
+
+def _detect_text_intent(text_lower: str) -> tuple[str | None, list[str]]:
+    """Возвращает (intent, candidates). Если intent=None и есть candidates — нужна уточнялка."""
+    scores: dict[str, int] = {}
     for keywords, intent in TEXT_INTENT_RULES:
-        if any(keyword in text_lower for keyword in keywords):
-            return intent
-    return None
+        score = sum(1 for keyword in keywords if _matches_keyword(text_lower, keyword))
+        if score > 0:
+            scores[intent] = score
+
+    if not scores:
+        return None, []
+
+    top_score = max(scores.values())
+    top_intents = [intent for intent, score in scores.items() if score == top_score]
+
+    if len(top_intents) == 1:
+        return top_intents[0], top_intents
+
+    return None, top_intents
 
 # ================== ЗАГРУЗКА БАЗЫ ЗНАНИЙ ==================
 try:
@@ -517,6 +566,110 @@ try:
 except FileNotFoundError:
     KNOWLEDGE_BASE = ""
     logger.error("Файл базы знаний %s не найден.", KNOWLEDGE_FILE_PATH)
+
+
+def _build_kb_faq(knowledge_text: str) -> list[dict]:
+    """Парсит блоки вида '### вопрос' + ответ из knowledges.txt."""
+    entries: list[dict] = []
+    current_q: str | None = None
+    current_answer_lines: list[str] = []
+
+    def flush_entry() -> None:
+        nonlocal current_q, current_answer_lines
+        if not current_q:
+            return
+        answer = "\n".join(current_answer_lines).strip()
+        if answer:
+            variants = [
+                v.strip().lower()
+                for v in re.split(r"\s*/\s*", current_q)
+                if v.strip()
+            ]
+            entries.append(
+                {
+                    "question": current_q.strip(),
+                    "variants": variants,
+                    "answer": answer,
+                }
+            )
+        current_q = None
+        current_answer_lines = []
+
+    for raw_line in knowledge_text.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("### "):
+            flush_entry()
+            current_q = line[4:].strip()
+            current_answer_lines = []
+            continue
+        if line.startswith("## "):
+            flush_entry()
+            continue
+        if current_q is not None:
+            current_answer_lines.append(line)
+
+    flush_entry()
+    return entries
+
+
+def _tokenize_for_match(text: str) -> set[str]:
+    tokens = re.findall(r"[a-zA-Zа-яА-Я0-9]+", text.lower())
+    return {t for t in tokens if len(t) >= 3}
+
+
+def _find_kb_answer(user_text: str) -> tuple[str | None, float, str | None]:
+    """Ищет наиболее релевантный ответ в FAQ-блоках базы знаний."""
+    if not KB_FAQ:
+        return None, 0.0, None
+
+    query = user_text.strip().lower()
+    query_tokens = _tokenize_for_match(query)
+    best_answer = None
+    best_question = None
+    best_score = 0.0
+
+    for entry in KB_FAQ:
+        answer = entry["answer"]
+        original_question = entry["question"]
+        for variant in entry["variants"]:
+            ratio = difflib.SequenceMatcher(None, query, variant).ratio()
+            variant_tokens = _tokenize_for_match(variant)
+            overlap = (
+                len(query_tokens & variant_tokens) / max(len(variant_tokens), 1)
+                if query_tokens and variant_tokens
+                else 0.0
+            )
+            contains_bonus = 0.12 if (variant in query or query in variant) else 0.0
+            score = 0.65 * ratio + 0.35 * overlap + contains_bonus
+            if score > best_score:
+                best_score = score
+                best_answer = answer
+                best_question = original_question
+
+    if best_score >= 0.56:
+        return best_answer, best_score, best_question
+    return None, best_score, best_question
+
+
+def _log_kb_match(user_id: int, user_text: str, matched_question: str | None, score: float, status: str) -> None:
+    """Логирует матчи FAQ в CSV для последующего улучшения базы знаний."""
+    path = pathlib.Path("logs") / "kb_matches.csv"
+    write_header = not path.exists() or path.stat().st_size == 0
+    with path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["timestamp", "user_id", "user_text", "matched_question", "score", "status"])
+        writer.writerow([
+            dt.datetime.now().isoformat(),
+            user_id,
+            user_text[:500],
+            (matched_question or "")[:300],
+            round(score, 4),
+            status,
+        ])
+
+
+KB_FAQ = _build_kb_faq(KNOWLEDGE_BASE)
 
 # ================== СИСТЕМНЫЙ ПРОМТ ==================
 SYSTEM_PROMPT = r"""
@@ -1337,13 +1490,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     log_question(user_id, user_text)
 
     text_lower = user_text.lower()
-    intent = _detect_text_intent(text_lower)
+    intent, candidates = _detect_text_intent(text_lower)
+    kb_answer, kb_score, kb_question = _find_kb_answer(user_text)
+
+    # Если текст не покрыт кнопочным интентом или интент неоднозначный,
+    # сначала пробуем дать релевантный ответ напрямую из базы знаний.
+    if kb_answer and (not intent or candidates):
+        _log_kb_match(user_id, user_text, kb_question, kb_score, "matched")
+        append_to_history(context, "user", user_text)
+        append_to_history(context, "assistant", kb_answer)
+        await send_answer(update.message, kb_answer)
+        context.chat_data["last_topic"] = "вопросом по услугам"
+        _schedule_followup(context, chat_id, user_id, "вопросом по услугам")
+        logger.info("Ответ из базы знаний (score=%.2f) для %s: %r", kb_score, user_id, user_text[:80])
+        return
+    if kb_question:
+        _log_kb_match(user_id, user_text, kb_question, kb_score, "no_match")
+    elif intent:
+        _log_kb_match(user_id, user_text, None, 0.0, "fallback_intent")
+
     if not intent:
-        answer = (
-            "Чтобы ответить максимально точно, выберите нужный раздел в меню ниже ⬇️\n\n"
-            "Или напишите короче, например: «цены», «мойка», «полировка», "
-            "«самообслуживание», «адрес», «скидки»."
-        )
+        if candidates:
+            candidate_labels = [
+                f"• {INTENT_CLARIFY_LABELS.get(candidate, candidate)}"
+                for candidate in candidates[:4]
+            ]
+            answer = (
+                "Хочу ответить точно, но запрос сейчас двусмысленный.\n"
+                "Уточните, пожалуйста, что именно интересует:\n"
+                f"{chr(10).join(candidate_labels)}"
+            )
+        else:
+            answer = (
+                "Чтобы ответить максимально точно, выберите нужный раздел в меню ниже ⬇️\n\n"
+                "Или напишите короче, например: «цены», «мойка», «полировка», "
+                "«самообслуживание», «адрес», «скидки»."
+            )
         answer = _with_sales_cta(answer)
         append_to_history(context, "user", user_text)
         append_to_history(context, "assistant", answer)
