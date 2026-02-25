@@ -19,13 +19,14 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from telegram.error import TimedOut
 from telegram.request import HTTPXRequest
 import openai
 
 from analytics import (
     log_new_client, log_question, log_token_usage, log_button_click,
     log_rating, generate_monthly_report, generate_text_summary,
-    log_consent, has_consent, delete_user_data,
+    log_consent, has_consent, delete_user_data, log_booking,
 )
 
 # ================== НАСТРОЙКИ ==================
@@ -303,21 +304,36 @@ MENU_PROMPTS = {
 
 STATIC_MENU_ANSWERS = {
     "menu_services": (
-        "Мы оказываем полный спектр услуг по уходу за автомобилем:\n"
-        "• мойка\n• полировка\n• защита ЛКП\n• детейлинг салона\n"
-        "• бронирование стекла\n• ремонт сколов\n\n"
-        "Выберите нужный раздел в меню ниже ⬇️"
+        "Подберем формат ухода под Вашу задачу и бюджет — от поддерживающей мойки до полной защиты кузова:\n"
+        "• Быстрая детейлинг-мойка (от 3 000 ₽)\n"
+        "• Комплексная детейлинг-мойка Bearlake (от 8 000 ₽)\n"
+        "• Полировка ЛКП (от 25 000 ₽)\n"
+        "• Керамические покрытия (от 5 000 ₽)\n"
+        "• Детейлинг чистка интерьера (от 28 000 ₽)\n"
+        "• Защитные полиуретановые пленки (от 85 000 ₽)\n"
+        "• Бронирование лобового стекла (от 30 000 ₽)\n"
+        "• Ремонт трещин и сколов стекла (от 3 500 ₽)\n"
+        "• Деконтаминация ЛКП (от 6 000 ₽)\n"
+        "• Мойка подкапотного пространства (от 9 000 ₽)\n\n"
+        "*Цены на услуги мастеров зависят от класса авто: S / M / L.*\n\n"
+        "Выберите нужный раздел ниже — и сразу покажу, что входит и сколько по времени ⬇️"
     ),
     "menu_self": (
-        "Пост самообслуживания работает 24/7.\n"
+        "Хотите сделать уход самостоятельно, но в профессиональных условиях? Отличный выбор.\n"
+        "Пост самообслуживания работает 24/7.\n\n"
         "Тарифы:\n• 700 ₽/час — бокс и оборудование\n"
         "• 900 ₽/час — бокс, оборудование и расходники\n"
         "Минимум — 2 часа.\n\n"
-        "Выберите нужный пункт ниже ⬇️"
+        "В студии есть АВД, горячая вода, пылесос, турбосушка, "
+        "пенокомплекты, кисти и аксессуары. Можно работать вдвоем.\n\n"
+        "Выберите пункт ниже — расскажу детали и условия ⬇️"
     ),
-    "menu_shop": "Выберите раздел магазина по кнопкам ниже ⬇️",
+    "menu_shop": (
+        "В магазине собрали только проверенную автохимию, которой реально работаем в студии.\n"
+        "Выберите раздел ниже — подскажу, что лучше под Вашу задачу ⬇️"
+    ),
     "menu_comfort": (
-        "В студии есть всё для комфортного ожидания:\n"
+        "Пока автомобиль в работе, Вы отдыхаете в комфортной зоне:\n"
         "• кофе/чай и лёгкие перекусы\n"
         "• Wi-Fi и зона отдыха\n"
         "• отопление и кондиционирование\n"
@@ -330,49 +346,98 @@ STATIC_MENU_ANSWERS = {
         "Яндекс-карты: https://yandex.ru/maps/org/bearlake/46971604224/?ll=38.023081%2C56.067485&z=17"
     ),
     "menu_portfolio": (
-        "Примеры работ можно посмотреть:\n"
+        "Хотите увидеть результат «до/после»? Примеры работ доступны:\n"
         "• на сайте студии\n"
         "• в Telegram-канале"
         "\n\nСайт: https://bearlake.clients.site/\n"
         "Telegram: https://t.me/bearlake_detailing"
     ),
     "menu_discounts": (
-        "Актуальные скидки:\n"
+        "Актуальные выгоды для клиентов:\n"
         "• В офлайн-магазине — 5% для постоянных клиентов\n"
         "• На Ozon при первом заказе — 5% по промокоду BEARLAKE\n\n"
         "Акции публикуем в Telegram-канале: https://t.me/bearlake_detailing"
     ),
-    "sub_wash": "Доступно 2 формата: двухфазная мойка и комплексная мойка. Выберите нужный вариант ниже ⬇️",
+    "sub_wash": (
+        "По мойке есть 2 формата:\n"
+        "• быстрый и поддерживающий\n"
+        "• максимально тщательный комплекс\n\n"
+        "Выберите вариант ниже — и сразу покажу состав услуги ⬇️"
+    ),
     "sub_wash_twophase": (
         "Двухфазная мойка кузова — от 2 500 ₽.\n"
-        "Включает: 2-фазную мойку составами OPT/NXTZEN, очистку порогов, "
-        "чистку ковриков, мойку шин/дисков и пропитку шин."
+        "Включает:\n"
+        "• бережную 2-фазную мойку составами OPT/NXTZEN\n"
+        "• очистку порогов\n"
+        "• чистку ковриков\n"
+        "• мойку шин и дисков\n"
+        "• пропитку шин (мат/глянец)\n\n"
+        "Идеально для регулярного ухода, когда важно быстро освежить авто без компромиссов по качеству.\n\n"
+        "*Итоговая стоимость зависит от класса авто: S / M / L.*"
     ),
     "sub_wash_complex": (
         "Комплексная детейлинг-мойка Bearlake — от 8 000 ₽, от 4 часов.\n"
-        "Включает глубокую мойку экстерьера, уборку салона и багажника, "
-        "чистку стекол, продувку, обработку ЛКП/дисков."
+        "Включает:\n"
+        "• 2-фазную мойку кузова и порогов\n"
+        "• чистку дисков/шин с пропиткой\n"
+        "• продувку кузова горячим воздухом\n"
+        "• чистку стекол снаружи и внутри\n"
+        "• уборку салона и багажника, глубокую чистку ковров\n"
+        "• деликатную очистку интерьера\n"
+        "• обработку ЛКП и дисков квик-детейлером\n\n"
+        "Это формат «сделать отлично и надолго» — автомобиль выглядит заметно свежее как снаружи, так и в салоне.\n"
+        "При сложных загрязнениях может потребоваться деконтаминация.\n"
+        "*Итоговая стоимость зависит от класса авто: S / M / L.*"
     ),
     "sub_polish": (
         "Полировка ЛКП (Light Polish) — от 25 000 ₽, от 12 часов.\n"
-        "До 50% удаления царапин + защита ЛКП на 3–4 месяца."
+        "Что входит:\n"
+        "• подготовительная детейлинг-мойка\n"
+        "• бережная коррекция ЛКП\n"
+        "• удаление до 50% царапин\n"
+        "• восстановление блеска и гладкости\n"
+        "• защита ЛКП на 3–4 месяца (финишный силант)\n\n"
+        "Результат: глубже цвет, зеркальный блеск и более ухоженный внешний вид автомобиля.\n"
+        "Перед услугой обязательна быстрая или комплексная мойка."
     ),
     "sub_protection": (
         "По защите ЛКП доступны:\n"
         "• керамические покрытия — от 5 000 ₽\n"
-        "• полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽"
+        "• полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽\n\n"
+        "Керамика подбирается по задачам и сроку службы.\n"
+        "Пленки защищают от сколов, царапин, пескоструя и реагентов."
     ),
     "sub_interior": (
         "Детейлинг чистка интерьера (химчистка) — от 28 000 ₽, 1 день.\n"
+        "Что входит:\n"
+        "• удаление загрязнений и пыли со всех поверхностей\n"
+        "• глубокая чистка карпета салона и багажника\n"
+        "• очистка сидений, дверных карт, панели, дефлекторов\n"
+        "• чистка стекол изнутри и труднодоступных мест\n\n"
+        "Результат: чистый и свежий салон с комфортной атмосферой без лишних запахов.\n"
         "Перед химчисткой требуется мойка."
     ),
-    "sub_glass": "Бронирование лобового стекла — от 30 000 ₽, от 1 дня.",
-    "sub_chips": "Ремонт трещин и сколов стекла — от 3 500 ₽.",
+    "sub_glass": (
+        "Бронирование лобового стекла — от 30 000 ₽, от 1 дня.\n"
+        "Виды пленок: Rayno Crystal Shield, Never Scratch.\n"
+        "Пленка защищает от сколов и пескоструя, не искажая обзор."
+    ),
+    "sub_chips": (
+        "Ремонт трещин и сколов стекла — от 3 500 ₽.\n"
+        "Задача услуги — остановить дальнейшее разрушение стекла и "
+        "сделать дефект менее заметным."
+    ),
     "sub_self_equip": (
-        "На посту самообслуживания есть: АВД, горячая вода, пылесос, турбосушка, "
+        "На посту самообслуживания есть всё, чтобы сделать качественный уход своими руками: "
+        "АВД, горячая вода, пылесос, турбосушка, "
         "ведра, пенокомплекты, кисти и аксессуары."
     ),
-    "sub_self_price": "Тарифы: 700 ₽/час (бокс+оборудование) и 900 ₽/час (с расходниками). Минимум 2 часа.",
+    "sub_self_price": (
+        "Тарифы:\n"
+        "• 700 ₽/час — бокс + оборудование\n"
+        "• 900 ₽/час — бокс + оборудование + расходники\n"
+        "Минимальное время — 2 часа."
+    ),
     "sub_self_included": (
         "В тариф 900 ₽/час входят: шампунь для 1/2 фазы, губка и микрофибра. "
         "В тариф 700 ₽/час — только бокс и оборудование."
@@ -380,6 +445,7 @@ STATIC_MENU_ANSWERS = {
     "sub_self_rules": (
         "Рекомендуем запись заранее.\n"
         "Можно работать вдвоем.\n"
+        "Первое посещение — по предварительному согласованию с 9:00 до 22:00.\n"
         "Запрещены грязные ремонтные работы и агрессивные жидкости."
     ),
     "sub_comfort_food": "В студии есть кофе, чай, лёгкие перекусы и фрукты для клиентов.",
@@ -387,6 +453,33 @@ STATIC_MENU_ANSWERS = {
     "sub_comfort_climate": "Да, есть отопление, кондиционирование и санузел.",
     "sub_comfort_access": "Да, предусмотрены условия для маломобильных клиентов.",
 }
+
+TEXT_INTENT_RULES: list[tuple[tuple[str, ...], str]] = [
+    (("цены", "прайс", "сколько стоит", "стоимость"), "menu_prices"),
+    (("адрес", "как найти", "как добраться", "где вы", "где находитесь"), "menu_address"),
+    (("график", "режим работы", "часы работы"), "menu_address"),
+    (("самообслуж", "пост", "аренда бокса"), "menu_self"),
+    (("оборудован", "авд", "пылесос", "турбосуш"), "sub_self_equip"),
+    (("700", "900", "тариф", "расходник", "минимальное время"), "sub_self_price"),
+    (("мойка", "двухфаз", "комплексн"), "sub_wash"),
+    (("полиров", "light polish"), "sub_polish"),
+    (("керамик", "пленк", "ppf", "защит"), "sub_protection"),
+    (("салон", "химчист", "интерьер"), "sub_interior"),
+    (("лобов", "стекл", "бронир"), "sub_glass"),
+    (("скол", "трещин"), "sub_chips"),
+    (("магазин", "автохим", "ozon"), "menu_shop"),
+    (("скидк", "промокод", "акци"), "sub_shop_discounts"),
+    (("кофе", "чай", "wifi", "вайфай", "комфорт", "отдых"), "menu_comfort"),
+    (("примеры", "портфолио", "работ"), "menu_portfolio"),
+    (("преимущ", "почему вы", "чем лучше"), "menu_advantages"),
+]
+
+
+def _detect_text_intent(text_lower: str) -> str | None:
+    for keywords, intent in TEXT_INTENT_RULES:
+        if any(keyword in text_lower for keyword in keywords):
+            return intent
+    return None
 
 # ================== ЗАГРУЗКА БАЗЫ ЗНАНИЙ ==================
 try:
@@ -671,6 +764,7 @@ def _ensure_fresh_session(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> N
     context.chat_data["history"] = []
     context.chat_data["rated"] = False
     context.chat_data["booking_confirmed"] = False
+    context.chat_data["booking_logged"] = False
     context.chat_data["greeted"] = False
     context.chat_data["last_active_date"] = today
     _cancel_user_timers(context.job_queue, chat_id)
@@ -770,6 +864,27 @@ async def _send_followup(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.warning("Не удалось отправить follow-up в %s: %s", chat_id, e)
 
 
+def _estimate_booking_amount(service_topic: str) -> int:
+    """Оценка минимальной выручки по теме интереса."""
+    topic = (service_topic or "").lower()
+    pricing_rules = [
+        (("быстр", "двухфаз"), 3000),
+        (("комплексн", "мойк"), 8000),
+        (("деконтам"), 6000),
+        (("подкапот"), 9000),
+        (("полиров",), 25000),
+        (("керамич",), 5000),
+        (("интерьер", "салон", "химчист"), 28000),
+        (("пленк", "ppf", "брон"), 30000),
+        (("скол", "трещин"), 3500),
+        (("самообслуж",), 700),
+    ]
+    for keywords, amount in pricing_rules:
+        if any(keyword in topic for keyword in keywords):
+            return amount
+    return 3000
+
+
 # ================== ОБРАБОТЧИКИ КОМАНД ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None:
@@ -786,6 +901,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.chat_data["history"] = []
     context.chat_data["rated"] = False
     context.chat_data["booking_confirmed"] = False
+    context.chat_data["booking_logged"] = False
     context.chat_data["last_active_date"] = dt.date.today().isoformat()
     _cancel_user_timers(context.job_queue, update.effective_chat.id)
 
@@ -919,6 +1035,7 @@ def _build_reply_markup(
 async def send_answer(message, text: str, force_booking: bool = False) -> None:
     """Отправляет ответ, автоматически добавляя кнопки записи при маркере."""
     clean_text, has_marker = extract_booking_marker(text)
+    clean_text = _with_sales_cta(clean_text)
     clean_text, links = _extract_links(clean_text)
     show_booking = has_marker or force_booking
     if show_booking:
@@ -929,6 +1046,42 @@ async def send_answer(message, text: str, force_booking: bool = False) -> None:
         reply_markup=reply_markup,
         disable_web_page_preview=True,
     )
+
+
+def _with_sales_cta(text: str) -> str:
+    """Добавляет мягкий продающий CTA в конце ответа."""
+    default_cta = (
+        "Готов помочь выбрать лучший вариант под ваш авто "
+        "и сразу сориентировать по цене и срокам ✅"
+    )
+    text_lower = text.lower()
+
+    if "мойк" in text_lower:
+        cta = "Если хотите, подскажу какой формат мойки лучше именно под вашу задачу и время ⏱️"
+    elif "полиров" in text_lower:
+        cta = "Могу сориентировать, какой эффект полировки получите на вашем авто и сколько это займет ✨"
+    elif "керамич" in text_lower or "пленк" in text_lower or "защит" in text_lower:
+        cta = "Если хотите, подберу оптимальную защиту по сроку службы и бюджету 🛡️"
+    elif "салон" in text_lower or "химчист" in text_lower or "интерьер" in text_lower:
+        cta = "Подскажу оптимальный формат ухода за салоном под текущее состояние и бюджет 🧼"
+    elif "самообслуж" in text_lower or "700 ₽/час" in text_lower or "900 ₽/час" in text_lower:
+        cta = "Если хотите, подскажу оптимальный тариф самообслуживания под ваш сценарий 🚿"
+    elif "цен" in text_lower or "прайс" in text_lower or "стоим" in text_lower:
+        cta = "Могу сразу сориентировать по цене и срокам именно для вашего класса авто (S / M / L) 💰"
+    else:
+        cta = default_cta
+
+    if cta in text or default_cta in text:
+        return text
+    if text == FALLBACK_RESPONSE:
+        return text
+    if "выберите нужный раздел в меню ниже" in text_lower:
+        return text
+    if "выберите раздел магазина по кнопкам ниже" in text_lower:
+        return text
+    if "записаться можно по кнопке ниже" in text_lower:
+        return text
+    return f"{text}\n\n{cta}"
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -947,6 +1100,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.chat_data["greeted"] = True
         context.chat_data["history"] = []
         context.chat_data["booking_confirmed"] = False
+        context.chat_data["booking_logged"] = False
         greeting = (
             "Спасибо! Согласие принято ✅\n\n"
             "Помогу подобрать услугу, расскажу о ценах "
@@ -959,6 +1113,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if query.data == "booking_done":
+        if not context.chat_data.get("booking_logged"):
+            service_topic = context.chat_data.get("last_topic", "не указано")
+            amount_from = _estimate_booking_amount(service_topic)
+            log_booking(user_id, service_topic, amount_from)
+            context.chat_data["booking_logged"] = True
         context.chat_data["booking_confirmed"] = True
         context.chat_data["rated"] = False
         _cancel_jobs(context.job_queue, f"followup_{query.message.chat_id}")
@@ -1012,9 +1171,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if query.data == "menu_shop":
         log_button_click(user_id, query.data)
-        append_to_history(context, "assistant", "Выберите раздел магазина по кнопкам ниже ⬇️")
+        answer = _with_sales_cta("Выберите раздел магазина по кнопкам ниже ⬇️")
+        append_to_history(context, "assistant", answer)
         await query.message.reply_text(
-            "Выберите раздел магазина по кнопкам ниже ⬇️",
+            answer,
             reply_markup=SHOP_KEYBOARD,
             disable_web_page_preview=True,
         )
@@ -1027,7 +1187,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_text = MENU_PROMPTS.get(query.data, "")
         if user_text:
             append_to_history(context, "user", user_text)
-        answer = SHOP_RECOMMEND_ANSWER if query.data == "sub_shop_recommend" else SHOP_DISCOUNTS_ANSWER
+        answer = _with_sales_cta(
+            SHOP_RECOMMEND_ANSWER if query.data == "sub_shop_recommend" else SHOP_DISCOUNTS_ANSWER
+        )
         append_to_history(context, "assistant", answer)
         await query.message.reply_text(
             answer,
@@ -1075,6 +1237,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     sub_menu = SUB_MENUS.get(query.data)
     if sub_menu:
         clean_text, has_marker = extract_booking_marker(answer)
+        clean_text = _with_sales_cta(clean_text)
         clean_text, links = _extract_links(clean_text)
         reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
         await query.message.reply_text(
@@ -1116,35 +1279,65 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     log_question(user_id, user_text)
 
-    try:
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-    except Exception as e:
-        logger.warning("Не удалось отправить 'typing': %s", e)
-
     text_lower = user_text.lower()
-
-    if (
-        "преимуществ" in text_lower
-        or "почему именно вы" in text_lower
-        or "почему выбрать вас" in text_lower
-        or "чем вы лучше других" in text_lower
-        or "чем вы отличаетесь" in text_lower
-    ):
+    intent = _detect_text_intent(text_lower)
+    if not intent:
+        answer = (
+            "Чтобы ответить максимально точно, выберите нужный раздел в меню ниже ⬇️\n\n"
+            "Или напишите короче, например: «цены», «мойка», «полировка», "
+            "«самообслуживание», «адрес», «скидки»."
+        )
+        answer = _with_sales_cta(answer)
         append_to_history(context, "user", user_text)
-        append_to_history(context, "assistant", ADVANTAGES_ANSWER)
-        await send_answer(update.message, ADVANTAGES_ANSWER, force_booking=True)
-        _schedule_followup(context, chat_id, user_id, "нашими преимуществами")
+        append_to_history(context, "assistant", answer)
+        await update.message.reply_text(answer, reply_markup=GREETING_KEYBOARD)
+        _schedule_followup(context, chat_id, user_id, "нашими услугами")
         return
 
-    history = get_history(context)
-    answer = await get_gpt_response(user_text, history)
-
     append_to_history(context, "user", user_text)
-    append_to_history(context, "assistant", answer)
 
-    await send_answer(update.message, answer)
+    if intent == "menu_advantages":
+        answer = ADVANTAGES_ANSWER
+        append_to_history(context, "assistant", answer)
+        await send_answer(update.message, answer, force_booking=True)
+    elif intent in {"menu_prices", "sub_all_prices"}:
+        answer = PRICES_ANSWER
+        append_to_history(context, "assistant", answer)
+        await send_answer(update.message, answer, force_booking=True)
+    elif intent == "menu_shop":
+        answer = _with_sales_cta("Выберите раздел магазина по кнопкам ниже ⬇️")
+        append_to_history(context, "assistant", answer)
+        await update.message.reply_text(answer, reply_markup=SHOP_KEYBOARD)
+    elif intent in {"sub_shop_recommend", "sub_shop_discounts"}:
+        answer = _with_sales_cta(
+            SHOP_RECOMMEND_ANSWER if intent == "sub_shop_recommend" else SHOP_DISCOUNTS_ANSWER
+        )
+        append_to_history(context, "assistant", answer)
+        await update.message.reply_text(answer, reply_markup=SHOP_KEYBOARD, disable_web_page_preview=True)
+    else:
+        answer = STATIC_MENU_ANSWERS.get(intent)
+        if not answer:
+            answer = _with_sales_cta("Выберите, пожалуйста, нужный раздел в меню ниже ⬇️")
+            append_to_history(context, "assistant", answer)
+            await update.message.reply_text(answer, reply_markup=GREETING_KEYBOARD)
+        else:
+            append_to_history(context, "assistant", answer)
+            sub_menu = SUB_MENUS.get(intent)
+            if sub_menu:
+                clean_text, has_marker = extract_booking_marker(answer)
+                clean_text = _with_sales_cta(clean_text)
+                clean_text, links = _extract_links(clean_text)
+                reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
+                await update.message.reply_text(
+                    clean_text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                )
+            else:
+                await send_answer(update.message, answer)
 
-    topic = context.chat_data.get("last_topic", "нашими услугами")
+    topic = TOPIC_LABELS.get(intent, "нашими услугами")
+    context.chat_data["last_topic"] = topic
     _schedule_followup(context, chat_id, user_id, topic)
 
 # ================== КОМАНДЫ ПД ==================
@@ -1197,11 +1390,27 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         report_path = generate_monthly_report()
 
         await update.message.reply_text(text_summary)
-        with open(report_path, "rb") as f:
-            await update.message.reply_document(
-                document=f,
-                filename=os.path.basename(report_path),
-                caption="📎 Детальный отчёт с графиками",
+        sent = False
+        for attempt in range(2):
+            try:
+                with open(report_path, "rb") as f:
+                    await update.message.reply_document(
+                        document=f,
+                        filename=os.path.basename(report_path),
+                        caption="📎 Детальный отчёт с графиками",
+                        read_timeout=60,
+                        write_timeout=60,
+                    )
+                sent = True
+                break
+            except TimedOut:
+                logger.warning("TimedOut при отправке отчёта (попытка %d/2)", attempt + 1)
+                if attempt == 0:
+                    await asyncio.sleep(2)
+        if not sent:
+            await update.message.reply_text(
+                "⚠️ Отчёт сгенерирован, но отправка файла заняла слишком много времени.\n"
+                "Повторите /report через минуту, пожалуйста."
             )
     except Exception as e:
         logger.exception("Ошибка генерации отчёта: %s", e)
@@ -1271,7 +1480,12 @@ async def post_init(application: Application) -> None:
 
 
 def main() -> None:
-    request = HTTPXRequest()
+    request = HTTPXRequest(
+        connect_timeout=10.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=10.0,
+    )
     application = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)

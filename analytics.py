@@ -72,6 +72,15 @@ def log_button_click(user_id: int, button_data: str, timestamp: str = None):
     _append_csv("buttons.csv", ["user_id", "button", "timestamp"], [user_id, button_data, ts])
 
 
+def log_booking(user_id: int, service: str, amount_from: int, timestamp: str = None):
+    ts = timestamp or datetime.now().isoformat()
+    _append_csv(
+        "bookings.csv",
+        ["user_id", "service", "amount_from", "timestamp"],
+        [user_id, service, amount_from, ts],
+    )
+
+
 # ================ ЗАГРУЗКА ДАННЫХ ================
 
 def _load_csv(filename: str, date_col: str = "timestamp") -> pd.DataFrame:
@@ -223,11 +232,16 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
     tokens_df = _filter_period(_load_csv("tokens.csv"), start, end)
     buttons_df = _filter_period(_load_csv("buttons.csv"), start, end)
     ratings_df = _filter_period(_load_csv("ratings.csv"), start, end)
+    bookings_df = _filter_period(_load_csv("bookings.csv"), start, end)
 
     total_unique_users = questions_df["user_id"].nunique() if not questions_df.empty else 0
     total_new_clients = clients_df["user_id"].nunique() if not clients_df.empty else 0
     total_messages = len(questions_df)
     total_button_clicks = len(buttons_df)
+    total_bookings = len(bookings_df)
+    booked_users = bookings_df["user_id"].nunique() if not bookings_df.empty else 0
+    conversion_to_booking = round((booked_users / max(total_unique_users, 1)) * 100, 1)
+    revenue_from_bookings = int(bookings_df["amount_from"].sum()) if not bookings_df.empty else 0
     avg_msgs_per_user = round(total_messages / max(total_unique_users, 1), 1)
 
     total_prompt = int(tokens_df["prompt_tokens"].sum()) if not tokens_df.empty else 0
@@ -235,6 +249,7 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
     total_tokens = total_prompt + total_completion
     cost_usd = round(calc_cost_usd(total_prompt, total_completion), 4)
     cost_rub = round(calc_cost_rub(total_prompt, total_completion), 2)
+    romi_like = round(revenue_from_bookings / cost_rub, 1) if cost_rub > 0 else None
     avg_rating = round(ratings_df["rating"].mean(), 1) if not ratings_df.empty else "—"
 
     days_in_period = (end - start).days + 1
@@ -250,6 +265,11 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
         "Новых клиентов (/start)": total_new_clients,
         "Всего сообщений": total_messages,
         "Нажатий на кнопки": total_button_clicks,
+        "Подтвержденных записей через бота": total_bookings,
+        "Клиентов с записью": booked_users,
+        "Конверсия в запись": f"{conversion_to_booking}%",
+        "Оценочная выручка (минимум)": f"{revenue_from_bookings} ₽",
+        "ROMI-like (выручка min / расходы OpenAI)": f"x{romi_like}" if romi_like is not None else "—",
         "Сообщений / пользователь": avg_msgs_per_user,
         "Сообщений / день": avg_msgs_per_day,
         "Средняя оценка": avg_rating,
@@ -271,6 +291,7 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
             day_c = clients_df[clients_df["timestamp"].dt.date == day] if not clients_df.empty else pd.DataFrame()
             day_t = tokens_df[tokens_df["timestamp"].dt.date == day] if not tokens_df.empty else pd.DataFrame()
             day_b = buttons_df[buttons_df["timestamp"].dt.date == day] if not buttons_df.empty else pd.DataFrame()
+            day_bookings = bookings_df[bookings_df["timestamp"].dt.date == day] if not bookings_df.empty else pd.DataFrame()
 
             p_tok = int(day_t["prompt_tokens"].sum()) if not day_t.empty else 0
             c_tok = int(day_t["completion_tokens"].sum()) if not day_t.empty else 0
@@ -281,6 +302,8 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
                 "Активные пользователи": day_q["user_id"].nunique() if not day_q.empty else 0,
                 "Сообщений": len(day_q),
                 "Кнопок нажато": len(day_b),
+                "Записей через бота": len(day_bookings),
+                "Выручка min (₽)": int(day_bookings["amount_from"].sum()) if not day_bookings.empty else 0,
                 "Токенов": p_tok + c_tok,
                 "Стоимость (₽)": round(calc_cost_rub(p_tok, c_tok), 2),
             })
@@ -299,6 +322,13 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
         top_b.columns = ["Кнопка", "Нажатий"]
     else:
         top_b = pd.DataFrame(columns=["Кнопка", "Нажатий"])
+
+    # --- Топ услуг по бронированиям ---
+    if not bookings_df.empty:
+        top_services = bookings_df["service"].value_counts().reset_index()
+        top_services.columns = ["Услуга (тема)", "Записей"]
+    else:
+        top_services = pd.DataFrame(columns=["Услуга (тема)", "Записей"])
 
     # --- Пользователи ---
     user_rows = []
@@ -336,6 +366,9 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
             daily_df.to_excel(writer, sheet_name="По дням", index=False)
         top_q.to_excel(writer, sheet_name="Топ вопросов", index=False)
         top_b.to_excel(writer, sheet_name="Популярные кнопки", index=False)
+        top_services.to_excel(writer, sheet_name="Записи по услугам", index=False)
+        if not bookings_df.empty:
+            bookings_df.to_excel(writer, sheet_name="Бронирования", index=False)
         if not users_df.empty:
             users_df.to_excel(writer, sheet_name="Пользователи", index=False)
 
@@ -379,15 +412,21 @@ def generate_text_summary(year: int = None, month: int = None) -> str:
     questions_df = _filter_period(_load_csv("questions.csv"), start, end)
     tokens_df = _filter_period(_load_csv("tokens.csv"), start, end)
     buttons_df = _filter_period(_load_csv("buttons.csv"), start, end)
+    bookings_df = _filter_period(_load_csv("bookings.csv"), start, end)
 
     total_users = questions_df["user_id"].nunique() if not questions_df.empty else 0
     total_new = clients_df["user_id"].nunique() if not clients_df.empty else 0
     total_msgs = len(questions_df)
     total_clicks = len(buttons_df)
+    total_bookings = len(bookings_df)
+    booked_users = bookings_df["user_id"].nunique() if not bookings_df.empty else 0
+    conversion_to_booking = round((booked_users / max(total_users, 1)) * 100, 1)
+    revenue_from_bookings = int(bookings_df["amount_from"].sum()) if not bookings_df.empty else 0
 
     p_tok = int(tokens_df["prompt_tokens"].sum()) if not tokens_df.empty else 0
     c_tok = int(tokens_df["completion_tokens"].sum()) if not tokens_df.empty else 0
     cost_rub = round(calc_cost_rub(p_tok, c_tok), 2)
+    romi_like = round(revenue_from_bookings / cost_rub, 1) if cost_rub > 0 else None
 
     return (
         f"📊 Отчёт за {start.strftime('%B %Y')}\n"
@@ -396,6 +435,11 @@ def generate_text_summary(year: int = None, month: int = None) -> str:
         f"🆕 Новых клиентов: {total_new}\n"
         f"💬 Сообщений: {total_msgs}\n"
         f"🔘 Нажатий на кнопки: {total_clicks}\n"
+        f"📅 Записей через бота: {total_bookings}\n"
+        f"🙋 Клиентов с записью: {booked_users}\n"
+        f"📈 Конверсия в запись: {conversion_to_booking}%\n"
+        f"💵 Выручка min по записям: {revenue_from_bookings} ₽\n"
+        f"📊 ROMI-like: {'x' + str(romi_like) if romi_like is not None else '—'}\n"
         f"{'─' * 28}\n"
         f"🔤 Токенов: {p_tok + c_tok:,}\n"
         f"   ├ prompt: {p_tok:,}\n"
@@ -426,7 +470,7 @@ def has_consent(user_id: int) -> bool:
 def delete_user_data(user_id: int) -> dict:
     """Удаляет все данные пользователя из CSV. Возвращает {файл: удалённых строк}."""
     result = {}
-    for filename in ("clients.csv", "questions.csv", "buttons.csv", "ratings.csv", "consents.csv"):
+    for filename in ("clients.csv", "questions.csv", "buttons.csv", "ratings.csv", "consents.csv", "bookings.csv"):
         path = os.path.join(LOGS_DIR, filename)
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             continue
