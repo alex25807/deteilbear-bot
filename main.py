@@ -301,6 +301,93 @@ MENU_PROMPTS = {
     "sub_comfort_access": "Есть ли условия для маломобильных клиентов?",
 }
 
+STATIC_MENU_ANSWERS = {
+    "menu_services": (
+        "Мы оказываем полный спектр услуг по уходу за автомобилем:\n"
+        "• мойка\n• полировка\n• защита ЛКП\n• детейлинг салона\n"
+        "• бронирование стекла\n• ремонт сколов\n\n"
+        "Выберите нужный раздел в меню ниже ⬇️"
+    ),
+    "menu_self": (
+        "Пост самообслуживания работает 24/7.\n"
+        "Тарифы:\n• 700 ₽/час — бокс и оборудование\n"
+        "• 900 ₽/час — бокс, оборудование и расходники\n"
+        "Минимум — 2 часа.\n\n"
+        "Выберите нужный пункт ниже ⬇️"
+    ),
+    "menu_shop": "Выберите раздел магазина по кнопкам ниже ⬇️",
+    "menu_comfort": (
+        "В студии есть всё для комфортного ожидания:\n"
+        "• кофе/чай и лёгкие перекусы\n"
+        "• Wi-Fi и зона отдыха\n"
+        "• отопление и кондиционирование\n"
+        "• доступная среда\n\n"
+        "Выберите интересующий пункт ниже ⬇️"
+    ),
+    "menu_address": (
+        "Мы находимся по адресу: Московская область, г.о. Пушкинский, пос. Нагорное, 8А.\n"
+        "Студия работает ежедневно по предварительной записи.\n\n"
+        "Яндекс-карты: https://yandex.ru/maps/org/bearlake/46971604224/?ll=38.023081%2C56.067485&z=17"
+    ),
+    "menu_portfolio": (
+        "Примеры работ можно посмотреть:\n"
+        "• на сайте студии\n"
+        "• в Telegram-канале"
+        "\n\nСайт: https://bearlake.clients.site/\n"
+        "Telegram: https://t.me/bearlake_detailing"
+    ),
+    "menu_discounts": (
+        "Актуальные скидки:\n"
+        "• В офлайн-магазине — 5% для постоянных клиентов\n"
+        "• На Ozon при первом заказе — 5% по промокоду BEARLAKE\n\n"
+        "Акции публикуем в Telegram-канале: https://t.me/bearlake_detailing"
+    ),
+    "sub_wash": "Доступно 2 формата: двухфазная мойка и комплексная мойка. Выберите нужный вариант ниже ⬇️",
+    "sub_wash_twophase": (
+        "Двухфазная мойка кузова — от 2 500 ₽.\n"
+        "Включает: 2-фазную мойку составами OPT/NXTZEN, очистку порогов, "
+        "чистку ковриков, мойку шин/дисков и пропитку шин."
+    ),
+    "sub_wash_complex": (
+        "Комплексная детейлинг-мойка Bearlake — от 8 000 ₽, от 4 часов.\n"
+        "Включает глубокую мойку экстерьера, уборку салона и багажника, "
+        "чистку стекол, продувку, обработку ЛКП/дисков."
+    ),
+    "sub_polish": (
+        "Полировка ЛКП (Light Polish) — от 25 000 ₽, от 12 часов.\n"
+        "До 50% удаления царапин + защита ЛКП на 3–4 месяца."
+    ),
+    "sub_protection": (
+        "По защите ЛКП доступны:\n"
+        "• керамические покрытия — от 5 000 ₽\n"
+        "• полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽"
+    ),
+    "sub_interior": (
+        "Детейлинг чистка интерьера (химчистка) — от 28 000 ₽, 1 день.\n"
+        "Перед химчисткой требуется мойка."
+    ),
+    "sub_glass": "Бронирование лобового стекла — от 30 000 ₽, от 1 дня.",
+    "sub_chips": "Ремонт трещин и сколов стекла — от 3 500 ₽.",
+    "sub_self_equip": (
+        "На посту самообслуживания есть: АВД, горячая вода, пылесос, турбосушка, "
+        "ведра, пенокомплекты, кисти и аксессуары."
+    ),
+    "sub_self_price": "Тарифы: 700 ₽/час (бокс+оборудование) и 900 ₽/час (с расходниками). Минимум 2 часа.",
+    "sub_self_included": (
+        "В тариф 900 ₽/час входят: шампунь для 1/2 фазы, губка и микрофибра. "
+        "В тариф 700 ₽/час — только бокс и оборудование."
+    ),
+    "sub_self_rules": (
+        "Рекомендуем запись заранее.\n"
+        "Можно работать вдвоем.\n"
+        "Запрещены грязные ремонтные работы и агрессивные жидкости."
+    ),
+    "sub_comfort_food": "В студии есть кофе, чай, лёгкие перекусы и фрукты для клиентов.",
+    "sub_comfort_wifi": "Да, есть бесплатный Wi-Fi и зона отдыха.",
+    "sub_comfort_climate": "Да, есть отопление, кондиционирование и санузел.",
+    "sub_comfort_access": "Да, предусмотрены условия для маломобильных клиентов.",
+}
+
 # ================== ЗАГРУЗКА БАЗЫ ЗНАНИЙ ==================
 try:
     with open(KNOWLEDGE_FILE_PATH, "r", encoding="utf-8") as f:
@@ -962,21 +1049,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     log_button_click(user_id, query.data)
     log_question(user_id, user_text)
 
-    cached = _get_from_cache(query.data)
-    if cached:
-        logger.info("Кэш-попадание: %s", query.data)
-        answer = cached
+    static_answer = STATIC_MENU_ANSWERS.get(query.data)
+    if static_answer:
+        answer = static_answer
     else:
-        try:
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        except Exception as e:
-            logger.warning("Не удалось отправить 'typing': %s", e)
+        cached = _get_from_cache(query.data)
+        if cached:
+            logger.info("Кэш-попадание: %s", query.data)
+            answer = cached
+        else:
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception as e:
+                logger.warning("Не удалось отправить 'typing': %s", e)
 
-        history = get_history(context)
-        answer = await get_gpt_response(user_text, history)
+            history = get_history(context)
+            answer = await get_gpt_response(user_text, history)
 
-        if answer != FALLBACK_RESPONSE:
-            _put_to_cache(query.data, answer)
+            if answer != FALLBACK_RESPONSE:
+                _put_to_cache(query.data, answer)
 
     append_to_history(context, "user", user_text)
     append_to_history(context, "assistant", answer)
