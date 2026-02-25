@@ -6,6 +6,7 @@ import datetime as dt
 import re
 import difflib
 import csv
+import unicodedata
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import pathlib
@@ -463,6 +464,7 @@ STATIC_MENU_ANSWERS = {
         "• 700 ₽/час — бокс + оборудование\n"
         "• 900 ₽/час — бокс + оборудование + расходники\n"
         "Минимальное время — 2 часа.\n"
+        "Максимальное время не ограничено: можно арендовать на несколько дней по согласованию.\n"
         "Оплата: наличными, картой или онлайн."
     ),
     "sub_self_included": (
@@ -481,6 +483,7 @@ STATIC_MENU_ANSWERS = {
     "sub_comfort_wifi": "Да, есть бесплатный Wi-Fi и зона отдыха.",
     "sub_comfort_climate": "Да, есть отопление, кондиционирование и санузел.",
     "sub_comfort_access": "Да, предусмотрены условия для маломобильных клиентов.",
+    "direct_booking": "Записаться можно по кнопке ниже ⬇️ [ЗАПИСЬ]",
 }
 
 TEXT_INTENT_RULES: list[tuple[tuple[str, ...], str]] = [
@@ -507,12 +510,34 @@ TEXT_INTENT_RULES: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
+PRIORITY_TEXT_INTENT_RULES: list[tuple[tuple[str, ...], str]] = [
+    # Жесткий приоритет: запись
+    (("как записаться", "хочу записаться", "записаться", "запись", "yclients", "юклиентс"), "direct_booking"),
+    # Жесткий приоритет: цены
+    (("сколько стоит", "какая цена", "цены", "прайс", "стоимость"), "menu_prices"),
+    # Жесткий приоритет: адрес/график
+    (("где вы находитесь", "как доехать", "как добраться", "адрес", "график", "режим работы"), "menu_address"),
+    # Жесткий приоритет: скидки
+    (("промокод", "скидка", "скидки", "акция", "акции"), "sub_shop_discounts"),
+    # Жесткий приоритет: длительная аренда поста
+    (("на несколько дней", "несколько дней", "на сутки", "посуточ", "длительная аренда"), "sub_self_rules"),
+]
+
+
 def _matches_keyword(text_lower: str, keyword: str) -> bool:
     """Проверяет keyword без ложных совпадений внутри других слов."""
     if " " in keyword:
         return keyword in text_lower
     pattern = rf"(?<!\w){re.escape(keyword)}\w*"
     return re.search(pattern, text_lower) is not None
+
+
+def _detect_priority_intent(text_lower: str) -> str | None:
+    """Приоритетные интенты, которые должны перебивать обычный роутинг."""
+    for keywords, intent in PRIORITY_TEXT_INTENT_RULES:
+        if any(_matches_keyword(text_lower, keyword) for keyword in keywords):
+            return intent
+    return None
 
 
 INTENT_CLARIFY_LABELS = {
@@ -536,6 +561,7 @@ INTENT_CLARIFY_LABELS = {
     "menu_comfort": "условия в студии",
     "menu_portfolio": "примеры работ",
     "menu_advantages": "преимущества студии",
+    "direct_booking": "запись",
 }
 
 
@@ -590,6 +616,10 @@ def _build_kb_faq(knowledge_text: str) -> list[dict]:
                     "question": current_q.strip(),
                     "variants": variants,
                     "answer": answer,
+                    # Индекс для поиска: варианты вопроса + начало ответа.
+                    "search_tokens": _tokenize_for_match(
+                        f"{current_q} {answer[:500]}"
+                    ),
                 }
             )
         current_q = None
@@ -613,8 +643,129 @@ def _build_kb_faq(knowledge_text: str) -> list[dict]:
 
 
 def _tokenize_for_match(text: str) -> set[str]:
-    tokens = re.findall(r"[a-zA-Zа-яА-Я0-9]+", text.lower())
-    return {t for t in tokens if len(t) >= 3}
+    stop_words = {
+        "как", "где", "что", "это", "или", "для", "при", "есть", "нет", "можно",
+        "нужно", "вас", "вы", "мы", "они", "она", "оно", "его", "ее", "их",
+        "the", "and", "for", "with", "from",
+    }
+
+    def _normalize_token(token: str) -> str:
+        token = token.lower().replace("ё", "е")
+        # Легкая нормализация окончаний (без внешних библиотек),
+        # чтобы "стоимость/стоимости", "полировка/полировки" матчились стабильнее.
+        for suffix in ("иями", "ями", "ами", "ией", "ий", "ой", "ей", "ом", "ам", "ям", "ах", "ях", "ия", "ие", "ые", "ого", "ему", "ыми", "ыми", "ть", "ться", "лся", "лась", "лись", "ов", "ев", "иям", "иях", "ый", "ий", "ая", "ое", "ые", "у", "ю", "а", "я", "ы", "и", "е", "о"):
+            if len(token) > 4 and token.endswith(suffix):
+                return token[: -len(suffix)]
+        return token
+
+    raw_tokens = re.findall(r"[a-zA-Zа-яА-Я0-9]+", text.lower())
+    norm_tokens = {_normalize_token(t) for t in raw_tokens}
+    return {t for t in norm_tokens if len(t) >= 3 and t not in stop_words}
+
+
+def _detect_user_language(text: str) -> str:
+    """Определяет язык собеседника (ru/en) по тексту пользователя."""
+    cyr = len(re.findall(r"[а-яА-ЯёЁ]", text))
+    lat = len(re.findall(r"[a-zA-Z]", text))
+    if cyr >= lat:
+        return "ru"
+    return "en"
+
+
+def _contains_cyrillic(text: str) -> bool:
+    return re.search(r"[а-яА-ЯёЁ]", text) is not None
+
+
+def _is_emoji_char(ch: str) -> bool:
+    if not ch:
+        return False
+    category = unicodedata.category(ch)
+    if category == "So":
+        return True
+    code = ord(ch)
+    return (
+        0x2600 <= code <= 0x27BF
+        or 0x1F300 <= code <= 0x1FAFF
+    )
+
+
+def _emoji_count(text: str) -> int:
+    return sum(1 for ch in text if _is_emoji_char(ch))
+
+
+def _trim_to_max_chars(text: str, max_chars: int = 1000) -> str:
+    if len(text) <= max_chars:
+        return text
+    clipped = text[: max_chars - 1].rstrip()
+    return f"{clipped}…"
+
+
+def _enforce_emoji_range(text: str, min_count: int = 2, max_count: int = 4) -> str:
+    current = _emoji_count(text)
+    if current > max_count:
+        kept = 0
+        out_chars: list[str] = []
+        for ch in text:
+            if _is_emoji_char(ch):
+                if kept >= max_count:
+                    continue
+                kept += 1
+            out_chars.append(ch)
+        text = "".join(out_chars).rstrip()
+        current = _emoji_count(text)
+    if current < min_count:
+        need = min_count - current
+        pool = ["✅", "🚗", "📌", "🛠️"]
+        addon = " ".join(pool[:need])
+        text = f"{text.rstrip()} {addon}".strip()
+    return text
+
+
+async def _translate_text_if_needed(text: str, user_lang: str) -> str:
+    """Переводит ответ под язык собеседника, если язык не совпадает."""
+    if user_lang == "ru":
+        return text
+    if not _contains_cyrillic(text):
+        return text
+    try:
+        completion = await client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate the text to English. Keep meaning, bullet structure, links "
+                        "and marker [ЗАПИСЬ] unchanged if present."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            temperature=0.0,
+            max_tokens=700,
+        )
+        translated = completion.choices[0].message.content.strip()
+        return translated or text
+    except Exception as e:
+        logger.warning("Не удалось перевести ответ на en: %s", e)
+        return text
+
+
+async def _finalize_response_text(text: str, user_lang: str) -> str:
+    """Жестко применяет ограничения: язык, длина, эмодзи."""
+    out = await _translate_text_if_needed(text, user_lang)
+    out = _trim_to_max_chars(out, 1000)
+    out = _enforce_emoji_range(out, min_count=2, max_count=4)
+    out = _trim_to_max_chars(out, 1000)
+    return out
+
+
+def _char_ngrams(text: str, n: int = 3) -> set[str]:
+    cleaned = re.sub(r"\s+", " ", text.lower().strip())
+    if not cleaned:
+        return set()
+    if len(cleaned) <= n:
+        return {cleaned}
+    return {cleaned[i:i + n] for i in range(len(cleaned) - n + 1)}
 
 
 def _find_kb_answer(user_text: str) -> tuple[str | None, float, str | None]:
@@ -627,26 +778,51 @@ def _find_kb_answer(user_text: str) -> tuple[str | None, float, str | None]:
     best_answer = None
     best_question = None
     best_score = 0.0
+    second_best_score = 0.0
+    query_ngrams = _char_ngrams(query)
 
     for entry in KB_FAQ:
         answer = entry["answer"]
         original_question = entry["question"]
+        entry_tokens = entry.get("search_tokens", set())
         for variant in entry["variants"]:
             ratio = difflib.SequenceMatcher(None, query, variant).ratio()
             variant_tokens = _tokenize_for_match(variant)
-            overlap = (
+            overlap_variant = (
                 len(query_tokens & variant_tokens) / max(len(variant_tokens), 1)
                 if query_tokens and variant_tokens
                 else 0.0
             )
-            contains_bonus = 0.12 if (variant in query or query in variant) else 0.0
-            score = 0.65 * ratio + 0.35 * overlap + contains_bonus
+            overlap_entry = (
+                len(query_tokens & entry_tokens) / max(len(query_tokens), 1)
+                if query_tokens and entry_tokens
+                else 0.0
+            )
+            variant_ngrams = _char_ngrams(variant)
+            ngram_similarity = (
+                len(query_ngrams & variant_ngrams) / max(len(query_ngrams | variant_ngrams), 1)
+                if query_ngrams and variant_ngrams
+                else 0.0
+            )
+            contains_bonus = 0.10 if (variant in query or query in variant) else 0.0
+            score = (
+                0.38 * ratio
+                + 0.22 * overlap_variant
+                + 0.25 * overlap_entry
+                + 0.15 * ngram_similarity
+                + contains_bonus
+            )
             if score > best_score:
+                second_best_score = best_score
                 best_score = score
                 best_answer = answer
                 best_question = original_question
+            elif score > second_best_score:
+                second_best_score = score
 
-    if best_score >= 0.56:
+    # Если два топ-кандидата почти равны, лучше вернуть "нет матча"
+    # и перейти к уточнению, чем дать нерелевантный ответ.
+    if best_score >= 0.48 and (best_score - second_best_score) >= 0.05:
         return best_answer, best_score, best_question
     return None, best_score, best_question
 
@@ -670,6 +846,29 @@ def _log_kb_match(user_id: int, user_text: str, matched_question: str | None, sc
 
 
 KB_FAQ = _build_kb_faq(KNOWLEDGE_BASE)
+KB_TOKEN_INDEX: set[str] = set()
+for _entry in KB_FAQ:
+    KB_TOKEN_INDEX.update(_entry.get("search_tokens", set()))
+
+ON_TOPIC_HINTS = (
+    "детейлинг", "мойк", "полиров", "керамик", "ppf", "пленк",
+    "стекл", "скол", "трещин", "защит", "салон", "химчист", "деконтам",
+    "подкапот", "самообслуж", "пост", "аренда", "цена", "стоим", "прайс",
+    "адрес", "график", "запис", "yclients", "ozon", "магазин", "скидк", "акци",
+    "bearlake",
+)
+
+
+def _is_on_topic(user_text: str) -> bool:
+    text_lower = user_text.lower()
+    if any(greet in text_lower for greet in ("привет", "здравст", "добрый", "спасибо", "ок", "понял")):
+        return True
+    if any(_matches_keyword(text_lower, hint) for hint in ON_TOPIC_HINTS):
+        return True
+    tokens = _tokenize_for_match(user_text)
+    if not tokens:
+        return True
+    return bool(tokens & KB_TOKEN_INDEX)
 
 # ================== СИСТЕМНЫЙ ПРОМТ ==================
 SYSTEM_PROMPT = r"""
@@ -1239,7 +1438,12 @@ def _build_reply_markup(
     return InlineKeyboardMarkup(rows) if rows else None
 
 
-async def send_answer(message, text: str, force_booking: bool = False) -> None:
+async def send_answer(
+    message,
+    text: str,
+    force_booking: bool = False,
+    user_lang: str = "ru",
+) -> None:
     """Отправляет ответ, автоматически добавляя кнопки записи при маркере."""
     clean_text, has_marker = extract_booking_marker(text)
     clean_text = _with_sales_cta(clean_text)
@@ -1247,6 +1451,7 @@ async def send_answer(message, text: str, force_booking: bool = False) -> None:
     show_booking = has_marker or force_booking
     if show_booking:
         clean_text += PHONE_LINE
+    clean_text = await _finalize_response_text(clean_text, user_lang)
     reply_markup = _build_reply_markup(show_booking, links)
     await message.reply_text(
         clean_text,
@@ -1468,11 +1673,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     user_text = update.message.text.strip()
+    user_lang = _detect_user_language(user_text)
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id if update.effective_user else "unknown"
 
     if not _check_consent(context, user_id):
-        await update.message.reply_text(NO_CONSENT_TEXT)
+        consent_text = await _finalize_response_text(NO_CONSENT_TEXT, user_lang)
+        await update.message.reply_text(consent_text)
         return
 
     _ensure_fresh_session(context, chat_id)
@@ -1483,6 +1690,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "С возвращением! 👋\n\n"
             "Выберите раздел или задайте вопрос ⬇️"
         )
+        greeting = await _finalize_response_text(greeting, user_lang)
         await update.message.reply_text(greeting, reply_markup=GREETING_KEYBOARD)
 
     logger.info("Сообщение от %s: %r", user_id, user_text)
@@ -1490,16 +1698,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     log_question(user_id, user_text)
 
     text_lower = user_text.lower()
-    intent, candidates = _detect_text_intent(text_lower)
+    priority_intent = _detect_priority_intent(text_lower)
+    if priority_intent:
+        intent, candidates = priority_intent, [priority_intent]
+    else:
+        intent, candidates = _detect_text_intent(text_lower)
     kb_answer, kb_score, kb_question = _find_kb_answer(user_text)
 
     # Если текст не покрыт кнопочным интентом или интент неоднозначный,
     # сначала пробуем дать релевантный ответ напрямую из базы знаний.
-    if kb_answer and (not intent or candidates):
+    if kb_answer and (not intent or len(candidates) > 1):
         _log_kb_match(user_id, user_text, kb_question, kb_score, "matched")
         append_to_history(context, "user", user_text)
         append_to_history(context, "assistant", kb_answer)
-        await send_answer(update.message, kb_answer)
+        await send_answer(update.message, kb_answer, user_lang=user_lang)
         context.chat_data["last_topic"] = "вопросом по услугам"
         _schedule_followup(context, chat_id, user_id, "вопросом по услугам")
         logger.info("Ответ из базы знаний (score=%.2f) для %s: %r", kb_score, user_id, user_text[:80])
@@ -1510,6 +1722,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         _log_kb_match(user_id, user_text, None, 0.0, "fallback_intent")
 
     if not intent:
+        if not _is_on_topic(user_text):
+            answer = (
+                "Вопрос не по теме детейлинга. "
+                "Давайте вернёмся к услугам студии: мойка, полировка, защита, "
+                "салон, самообслуживание, цены, адрес или запись."
+            )
+            answer = await _finalize_response_text(answer, user_lang)
+            append_to_history(context, "user", user_text)
+            append_to_history(context, "assistant", answer)
+            await update.message.reply_text(answer, reply_markup=GREETING_KEYBOARD)
+            _schedule_followup(context, chat_id, user_id, "нашими услугами")
+            return
         if candidates:
             candidate_labels = [
                 f"• {INTENT_CLARIFY_LABELS.get(candidate, candidate)}"
@@ -1527,6 +1751,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "«самообслуживание», «адрес», «скидки»."
             )
         answer = _with_sales_cta(answer)
+        answer = await _finalize_response_text(answer, user_lang)
         append_to_history(context, "user", user_text)
         append_to_history(context, "assistant", answer)
         await update.message.reply_text(answer, reply_markup=GREETING_KEYBOARD)
@@ -1538,13 +1763,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if intent == "menu_advantages":
         answer = ADVANTAGES_ANSWER
         append_to_history(context, "assistant", answer)
-        await send_answer(update.message, answer, force_booking=True)
+        await send_answer(update.message, answer, force_booking=True, user_lang=user_lang)
     elif intent in {"menu_prices", "sub_all_prices"}:
         answer = PRICES_ANSWER
         append_to_history(context, "assistant", answer)
-        await send_answer(update.message, answer, force_booking=True)
+        await send_answer(update.message, answer, force_booking=True, user_lang=user_lang)
     elif intent == "menu_shop":
         answer = _with_sales_cta("Выберите раздел магазина по кнопкам ниже ⬇️")
+        answer = await _finalize_response_text(answer, user_lang)
         append_to_history(context, "assistant", answer)
         await update.message.reply_text(answer, reply_markup=SHOP_KEYBOARD)
     elif intent in {"sub_shop_recommend", "sub_shop_ozon", "sub_shop_discounts"}:
@@ -1554,12 +1780,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             answer = _with_sales_cta(SHOP_OZON_ANSWER)
         else:
             answer = _with_sales_cta(SHOP_DISCOUNTS_ANSWER)
+        answer = await _finalize_response_text(answer, user_lang)
         append_to_history(context, "assistant", answer)
         await update.message.reply_text(answer, reply_markup=SHOP_KEYBOARD, disable_web_page_preview=True)
     else:
         answer = STATIC_MENU_ANSWERS.get(intent)
         if not answer:
             answer = _with_sales_cta("Выберите, пожалуйста, нужный раздел в меню ниже ⬇️")
+            answer = await _finalize_response_text(answer, user_lang)
             append_to_history(context, "assistant", answer)
             await update.message.reply_text(answer, reply_markup=GREETING_KEYBOARD)
         else:
@@ -1569,6 +1797,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 clean_text, has_marker = extract_booking_marker(answer)
                 clean_text = _with_sales_cta(clean_text)
                 clean_text, links = _extract_links(clean_text)
+                clean_text = await _finalize_response_text(clean_text, user_lang)
                 reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
                 await update.message.reply_text(
                     clean_text,
@@ -1576,7 +1805,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     disable_web_page_preview=True,
                 )
             else:
-                await send_answer(update.message, answer)
+                await send_answer(update.message, answer, user_lang=user_lang)
 
     topic = TOPIC_LABELS.get(intent, "нашими услугами")
     context.chat_data["last_topic"] = topic
