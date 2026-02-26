@@ -117,6 +117,12 @@ WASH_KEYBOARD = InlineKeyboardMarkup([
         InlineKeyboardButton("🧽 Комплексная мойка (от 8 000 ₽)", callback_data="sub_wash_complex"),
     ],
     [
+        InlineKeyboardButton("🧪 Деконтаминация (от 6 000 ₽)", callback_data="sub_decon"),
+    ],
+    [
+        InlineKeyboardButton("🛠 Подкапотное пространство (от 9 000 ₽)", callback_data="sub_engine_wash"),
+    ],
+    [
         InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/")),
     ],
 ])
@@ -133,6 +139,9 @@ SERVICES_KEYBOARD = InlineKeyboardMarkup([
     [
         InlineKeyboardButton("🪟 Бронирование стекла", callback_data="sub_glass"),
         InlineKeyboardButton("🔧 Ремонт сколов", callback_data="sub_chips"),
+    ],
+    [
+        InlineKeyboardButton("🧪 Деконтаминация", callback_data="sub_decon"),
     ],
     [
         InlineKeyboardButton("💰 Все цены", callback_data="sub_all_prices"),
@@ -252,7 +261,7 @@ TOPIC_LABELS = {
     "menu_shop": "магазином автохимии",
     "menu_comfort": "условиями в студии",
     "sub_wash": "мойкой",
-    "sub_wash_twophase": "двухфазной мойкой",
+    "sub_wash_twophase": "быстрой детейлинг-мойкой",
     "sub_wash_complex": "комплексной мойкой Bearlake",
     "sub_polish": "полировкой",
     "sub_protection": "защитой ЛКП",
@@ -285,7 +294,7 @@ MENU_PROMPTS = {
     "menu_comfort": "Какие у вас условия в студии? Расскажите про комфорт для клиентов",
     "menu_portfolio": "Где посмотреть примеры ваших работ? Покажите примеры",
     # Подменю: услуги мастеров
-    "sub_wash": "Какие виды мойки вы предлагаете? Кратко расскажите про двухфазную и комплексную мойку",
+    "sub_wash": "Какие форматы мойки и очистки вы предлагаете? Расскажите про быструю, комплексную мойку, деконтаминацию и мойку подкапотного пространства.",
     "sub_wash_twophase": "Расскажите подробно про быструю детейлинг-мойку — что входит, сколько стоит, сколько по времени?",
     "sub_wash_complex": "Расскажите подробно про комплексную Детейлинг мойку Bearlake — что входит, сколько стоит, сколько по времени?",
     "sub_polish": "Сколько стоит полировка и что включено?",
@@ -320,16 +329,16 @@ STATIC_MENU_ANSWERS = {
         "В студии BEARLAKE доступны все ключевые форматы ухода — от поддерживающей мойки до глубокой защиты кузова и салона.\n\n"
         "Услуги:\n"
         "• Самообслуживание 24/7 (почасовая аренда)\n"
-        "• Быстрая детейлинг-мойка\n"
-        "• Комплексная детейлинг-мойка Bearlake\n"
-        "• Полировка ЛКП (Light Polish)\n"
-        "• Нанесение керамических покрытий\n"
-        "• Детейлинг чистка интерьера\n"
-        "• Защитные полиуретановые пленки (зоны риска/кузов)\n"
-        "• Бронирование лобового стекла\n"
-        "• Ремонт трещин и сколов стекла\n"
-        "• Деконтаминация ЛКП (металлические вкрапления и битум)\n"
-        "• Мойка подкапотного пространства\n\n"
+        "• Быстрая детейлинг-мойка — от 3 000 ₽, от 1 часа\n"
+        "• Комплексная детейлинг-мойка Bearlake — от 8 000 ₽, от 4 часов\n"
+        "• Полировка ЛКП (Light Polish) — от 25 000 ₽, от 12 часов\n"
+        "• Нанесение керамических покрытий — от 5 000 ₽, от 4 часов\n"
+        "• Детейлинг чистка интерьера — от 28 000 ₽, 1 день\n"
+        "• Защитные полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽, от 2 дней\n"
+        "• Бронирование лобового стекла — от 30 000 ₽, от 1 дня\n"
+        "• Ремонт трещин и сколов стекла — от 3 500 ₽, от 1 часа\n"
+        "• Деконтаминация ЛКП (металлические вкрапления и битум) — от 6 000 ₽, от 2 часов\n"
+        "• Мойка подкапотного пространства — от 9 000 ₽, от 4 часов\n\n"
         "*Стоимость услуг мастеров (кроме самообслуживания) зависит от класса авто (S / M / L) "
         "и уточняется после осмотра.*\n\n"
         "Выберите раздел ниже — расскажу состав услуги, сроки и ориентир по стоимости ⬇️"
@@ -385,10 +394,14 @@ STATIC_MENU_ANSWERS = {
         "Акции публикуем в Telegram-канале: https://t.me/bearlake_detailing"
     ),
     "sub_wash": (
-        "По мойке есть 2 формата:\n"
-        "• быстрый и поддерживающий\n"
-        "• максимально тщательный комплекс\n\n"
-        "Выберите вариант ниже — и сразу покажу состав услуги ⬇️"
+        "По мойке и очистке есть 4 формата:\n"
+        "• Быстрая детейлинг-мойка — поддерживающий уход (от 3 000 ₽, от 1 часа)\n"
+        "• Комплексная детейлинг-мойка Bearlake — глубокий уход внутри и снаружи (от 8 000 ₽, от 4 часов)\n"
+        "• Деконтаминация ЛКП — удаление битума и металлических вкраплений (от 6 000 ₽, от 2 часов)\n\n"
+        "• Мойка подкапотного пространства — деликатная очистка с изоляцией чувствительных компонентов (от 9 000 ₽, от 4 часов)\n\n"
+        "Деконтаминация — это этап глубокой химической очистки ЛКП от стойких загрязнений,\n"
+        "которые обычная мойка не убирает и которые со временем могут вредить покрытию.\n\n"
+        "Выберите вариант ниже — и сразу покажу, что входит и когда это действительно нужно ⬇️"
     ),
     "sub_wash_twophase": (
         "Быстрая детейлинг-мойка — от 3 000 ₽, от 1 часа.\n"
@@ -433,8 +446,8 @@ STATIC_MENU_ANSWERS = {
     ),
     "sub_protection": (
         "По защите ЛКП доступны:\n"
-        "• керамические покрытия — от 5 000 ₽\n"
-        "• полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽\n\n"
+        "• керамические покрытия — от 5 000 ₽, от 4 часов\n"
+        "• полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽, от 2 дней\n\n"
         "Керамика подбирается по задачам и сроку службы: легкие составы (3–12 месяцев) "
         "и профессиональные покрытия (2–3 года).\n"
         "Доступны, в том числе, NXTZEN Graphene Serum, NXTZEN Elite GSO2 и Opti-Coat Pro Plus.\n"
@@ -482,7 +495,7 @@ STATIC_MENU_ANSWERS = {
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_chips": (
-        "Ремонт трещин и сколов стекла — от 3 500 ₽.\n"
+        "Ремонт трещин и сколов стекла — от 3 500 ₽, от 1 часа.\n"
         "Задача услуги — остановить дальнейшее разрушение стекла и "
         "сделать дефект менее заметным."
         + MASTER_SERVICE_PRICE_NOTE
@@ -577,6 +590,43 @@ STRICT_TEXT_INTENTS = {
     "menu_advantages",
 }
 
+# Для карточек услуг по кнопкам приоритет отдаем KB/GPT, а не шаблонам.
+AI_FIRST_BUTTON_CALLBACKS = {
+    "menu_services",
+    "menu_self",
+    "sub_wash",
+    "sub_wash_twophase",
+    "sub_wash_complex",
+    "sub_decon",
+    "sub_engine_wash",
+    "sub_polish",
+    "sub_protection",
+    "sub_interior",
+    "sub_glass",
+    "sub_chips",
+    "sub_self_equip",
+    "sub_self_price",
+    "sub_self_included",
+    "sub_self_rules",
+}
+
+DETAILABLE_CALLBACKS = {
+    "sub_wash",
+    "sub_wash_twophase",
+    "sub_wash_complex",
+    "sub_decon",
+    "sub_engine_wash",
+    "sub_polish",
+    "sub_protection",
+    "sub_interior",
+    "sub_glass",
+    "sub_chips",
+    "sub_self_equip",
+    "sub_self_price",
+    "sub_self_included",
+    "sub_self_rules",
+}
+
 
 def _matches_keyword(text_lower: str, keyword: str) -> bool:
     """Проверяет keyword без ложных совпадений внутри других слов."""
@@ -588,9 +638,40 @@ def _matches_keyword(text_lower: str, keyword: str) -> bool:
 
 def _detect_priority_intent(text_lower: str) -> str | None:
     """Приоритетные интенты, которые должны перебивать обычный роутинг."""
+    # Формулировки вида "на 2 дня/3 суток" должны жестко идти в длительную аренду.
+    if re.search(r"(?:на\s*)?\d+\s*(?:дн|дня|дней|сут|сутк)", text_lower):
+        return "sub_self_rules"
     for keywords, intent in PRIORITY_TEXT_INTENT_RULES:
         if any(_matches_keyword(text_lower, keyword) for keyword in keywords):
             return intent
+    return None
+
+
+def _is_short_followup_request(user_text: str) -> bool:
+    text = user_text.strip().lower()
+    if len(text) > 24:
+        return False
+    triggers = {
+        "подскажи", "подскажите", "давай", "ок", "хорошо", "понятно",
+        "что лучше", "что посоветуешь", "и что", "и как",
+    }
+    return text in triggers
+
+
+def _context_followup_answer(last_topic: str) -> str | None:
+    low = last_topic.lower()
+    if "самообслуж" in low or "аренд" in low:
+        return (
+            "Подскажу по самообслуживанию коротко:\n"
+            "• 700 ₽/час — бокс и оборудование\n"
+            "• 900 ₽/час — бокс, оборудование и расходники\n"
+            "• минимум — 2 часа, максимум не ограничен (на несколько дней по согласованию)\n\n"
+            "Если планируете аренду на 2+ дня, сразу сориентирую по правилам и оптимальному формату."
+        )
+    if "мойк" in low:
+        return "Подскажу по мойке: для быстрого результата — быстрая детейлинг-мойка, для полного ухода — комплексная. Если хотите, сразу помогу выбрать под вашу задачу."
+    if "защит" in low or "керамик" in low or "пленк" in low:
+        return "Подскажу по защите: керамика — про блеск и удобный уход, пленка — про максимальную физическую защиту от сколов. Могу подобрать вариант под ваш бюджет и срок."
     return None
 
 
@@ -1157,7 +1238,11 @@ PRICES_ANSWER = (
     "Сроки по ключевым услугам:\n"
     "• Быстрая мойка — от 1 часа\n"
     "• Комплексная мойка — от 4 часов\n"
+    "• Деконтаминация — от 2 часов\n"
+    "• Мойка подкапотного пространства — от 4 часов\n"
     "• Полировка — от 12 часов\n"
+    "• Керамические покрытия — от 4 часов\n"
+    "• Оклейка PPF — от 2 дней\n"
     "• Химчистка — 1 день\n"
     "• Бронирование стекла — от 1 дня\n\n"
     "*Стоимость услуг мастеров (кроме самообслуживания) зависит от класса авто "
@@ -1576,6 +1661,42 @@ def _build_reply_markup(
     return InlineKeyboardMarkup(rows) if rows else None
 
 
+def _with_detail_button(
+    markup: InlineKeyboardMarkup | None,
+    callback_data: str,
+) -> InlineKeyboardMarkup | None:
+    """Добавляет кнопки 'Подробнее/Пока достаточно' для краткой карточки услуги."""
+    if callback_data not in DETAILABLE_CALLBACKS:
+        return markup
+    detail_btn = InlineKeyboardButton("✅ Да, хочу подробнее", callback_data=f"detail::{callback_data}")
+    skip_btn = InlineKeyboardButton("👌 Пока достаточно", callback_data=f"detail_skip::{callback_data}")
+    if markup is None:
+        return InlineKeyboardMarkup([[detail_btn], [skip_btn]])
+
+    rows = [list(row) for row in markup.inline_keyboard]
+    seen = {_button_key(btn) for row in rows for btn in row}
+    detail_key = _button_key(detail_btn)
+    skip_key = _button_key(skip_btn)
+    to_add: list[InlineKeyboardButton] = []
+    if detail_key not in seen:
+        to_add.append(detail_btn)
+    if skip_key not in seen:
+        to_add.append(skip_btn)
+    if to_add:
+        rows.append(to_add)
+    return InlineKeyboardMarkup(rows)
+
+
+def _with_detail_offer(text: str, callback_data: str) -> str:
+    """Добавляет callout к кнопке подробностей после краткого ответа."""
+    if callback_data not in DETAILABLE_CALLBACKS:
+        return text
+    low = text.lower()
+    if "хотите узнать об услуге больше" in low or "хочу подробнее" in low:
+        return text
+    return f"{text}\n\nХотите узнать об услуге больше? Нажмите «✅ Да, хочу подробнее» 👇"
+
+
 async def send_answer(
     message,
     text: str,
@@ -1643,6 +1764,46 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         pass
 
     user_id = update.effective_user.id if update.effective_user else "unknown"
+
+    if query.data and query.data.startswith("detail::"):
+        source_cb = query.data.split("::", 1)[1]
+        user_text = MENU_PROMPTS.get(source_cb) or f"Расскажите подробно про {TOPIC_LABELS.get(source_cb, 'услугу')}"
+        kb_answer, kb_score, kb_question = _find_kb_answer(user_text)
+        if kb_answer:
+            _log_kb_match(user_id, user_text, kb_question, kb_score, "matched")
+            detail_text = f"{kb_answer}\n\nЗаписаться можно по кнопке ниже ⬇️ [ЗАПИСЬ]"
+            append_to_history(context, "user", user_text)
+            append_to_history(context, "assistant", detail_text)
+            await send_answer(query.message, detail_text)
+        else:
+            if kb_question:
+                _log_kb_match(user_id, user_text, kb_question, kb_score, "no_match")
+            fallback = (
+                "Сейчас покажу кратко по этой услуге, а для полного детального расчета "
+                "под ваш автомобиль помогу в чате.\n\n"
+                "Записаться можно по кнопке ниже ⬇️ [ЗАПИСЬ]"
+            )
+            append_to_history(context, "assistant", fallback)
+            await send_answer(query.message, fallback, force_booking=True)
+
+        topic = TOPIC_LABELS.get(source_cb, "услугой")
+        context.chat_data["last_topic"] = topic
+        _schedule_followup(context, query.message.chat_id, user_id, topic)
+        return
+
+    if query.data and query.data.startswith("detail_skip::"):
+        source_cb = query.data.split("::", 1)[1]
+        short_ack = (
+            "Отлично, оставим краткий формат 👍\n"
+            "Если захотите, в любой момент дам подробный разбор именно по вашему авто.\n\n"
+            "Записаться можно по кнопке ниже ⬇️ [ЗАПИСЬ]"
+        )
+        append_to_history(context, "assistant", short_ack)
+        await send_answer(query.message, short_ack)
+        topic = TOPIC_LABELS.get(source_cb, "услугой")
+        context.chat_data["last_topic"] = topic
+        _schedule_followup(context, query.message.chat_id, user_id, topic)
+        return
 
     if query.data == "consent_accept":
         log_consent(user_id)
@@ -1767,25 +1928,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     log_button_click(user_id, query.data)
     log_question(user_id, user_text)
 
+    ai_first = query.data in AI_FIRST_BUTTON_CALLBACKS
     static_answer = STATIC_MENU_ANSWERS.get(query.data)
-    if static_answer:
+    if static_answer and not ai_first:
         answer = static_answer
     else:
-        cached = _get_from_cache(query.data)
-        if cached:
-            logger.info("Кэш-попадание: %s", query.data)
-            answer = cached
-        else:
-            try:
-                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-            except Exception as e:
-                logger.warning("Не удалось отправить 'typing': %s", e)
+        answer = None
+        if ai_first:
+            kb_answer, kb_score, kb_question = _find_kb_answer(user_text)
+            if kb_answer:
+                answer = kb_answer
+                _log_kb_match(user_id, user_text, kb_question, kb_score, "matched")
+            elif kb_question:
+                _log_kb_match(user_id, user_text, kb_question, kb_score, "no_match")
 
-            history = get_history(context)
-            answer = await get_gpt_response(user_text, history)
+        if answer is None:
+            cached = _get_from_cache(query.data)
+            if cached:
+                logger.info("Кэш-попадание: %s", query.data)
+                answer = cached
+            else:
+                try:
+                    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+                except Exception as e:
+                    logger.warning("Не удалось отправить 'typing': %s", e)
 
-            if answer != FALLBACK_RESPONSE:
-                _put_to_cache(query.data, answer)
+                history = get_history(context)
+                answer = await get_gpt_response(user_text, history)
+
+                if answer != FALLBACK_RESPONSE:
+                    _put_to_cache(query.data, answer)
 
     append_to_history(context, "user", user_text)
     append_to_history(context, "assistant", answer)
@@ -1794,15 +1966,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if sub_menu:
         clean_text, has_marker = extract_booking_marker(answer)
         clean_text = _with_sales_cta(clean_text)
+        clean_text = _with_detail_offer(clean_text, query.data)
         clean_text, links = _extract_links(clean_text)
         reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
+        reply_markup = _with_detail_button(reply_markup, query.data)
         await query.message.reply_text(
             clean_text,
             reply_markup=reply_markup,
             disable_web_page_preview=True,
         )
     else:
-        await send_answer(query.message, answer)
+        if query.data in DETAILABLE_CALLBACKS:
+            clean_text, has_marker = extract_booking_marker(answer)
+            clean_text = _with_sales_cta(clean_text)
+            clean_text = _with_detail_offer(clean_text, query.data)
+            clean_text, links = _extract_links(clean_text)
+            reply_markup = _build_reply_markup(has_marker, links)
+            reply_markup = _with_detail_button(reply_markup, query.data)
+            await query.message.reply_text(
+                clean_text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+            )
+        else:
+            await send_answer(query.message, answer)
 
     topic = TOPIC_LABELS.get(query.data, "нашими услугами")
     context.chat_data["last_topic"] = topic
@@ -1837,6 +2024,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     logger.info("Сообщение от %s: %r", user_id, user_text)
 
     log_question(user_id, user_text)
+
+    if _is_short_followup_request(user_text):
+        last_topic = context.chat_data.get("last_topic", "")
+        contextual = _context_followup_answer(last_topic)
+        if contextual:
+            contextual = await _finalize_response_text(contextual, user_lang)
+            append_to_history(context, "user", user_text)
+            append_to_history(context, "assistant", contextual)
+            await send_answer(update.message, contextual, user_lang=user_lang)
+            _schedule_followup(context, chat_id, user_id, last_topic or "нашими услугами")
+            return
 
     if context.chat_data.get("awaiting_consultation_priority"):
         priority = _detect_consultation_priority(user_text)
