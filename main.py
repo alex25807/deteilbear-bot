@@ -1649,7 +1649,22 @@ def _build_reply_markup(
     if show_booking:
         rows.extend([list(row) for row in BOOKING_KEYBOARD.inline_keyboard])
 
-    seen = {_button_key(btn) for row in rows for btn in row}
+    # Убираем дубли по всем кнопкам (база + запись + ссылки),
+    # чтобы не было двух одинаковых "Записаться онлайн".
+    dedup_rows: list[list[InlineKeyboardButton]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        dedup_row: list[InlineKeyboardButton] = []
+        for btn in row:
+            key = _button_key(btn)
+            if key in seen:
+                continue
+            seen.add(key)
+            dedup_row.append(btn)
+        if dedup_row:
+            dedup_rows.append(dedup_row)
+    rows = dedup_rows
+
     for label, url in links:
         button = _button_from_link(label, url)
         key = _button_key(button)
