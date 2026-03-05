@@ -610,6 +610,17 @@ AI_FIRST_BUTTON_CALLBACKS = {
     "sub_self_rules",
 }
 
+NO_CTA_CALLBACKS = {
+    "menu_address",
+    "menu_portfolio",
+    "menu_comfort",
+    "sub_comfort_food",
+    "sub_comfort_wifi",
+    "sub_comfort_climate",
+    "sub_comfort_access",
+    "menu_discounts",
+}
+
 DETAILABLE_CALLBACKS = {
     "sub_wash",
     "sub_wash_twophase",
@@ -990,6 +1001,7 @@ ON_TOPIC_HINTS = (
     "стекл", "скол", "трещин", "защит", "салон", "химчист", "деконтам",
     "подкапот", "самообслуж", "пост", "аренда", "цена", "стоим", "прайс",
     "адрес", "график", "запис", "yclients", "ozon", "магазин", "скидк", "акци",
+    "чат", "помог", "консультац",
     "bearlake",
 )
 
@@ -1694,11 +1706,9 @@ def _with_detail_button(
     skip_key = _button_key(skip_btn)
     to_add: list[InlineKeyboardButton] = []
     if detail_key not in seen:
-        to_add.append(detail_btn)
+        rows.append([detail_btn])
     if skip_key not in seen:
-        to_add.append(skip_btn)
-    if to_add:
-        rows.append(to_add)
+        rows.append([skip_btn])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1712,6 +1722,22 @@ def _with_detail_offer(text: str, callback_data: str) -> str:
     return f"{text}\n\nХотите узнать об услуге больше? Нажмите «✅ Да, хочу подробнее» 👇"
 
 
+def _cleanup_outgoing_text(text: str) -> str:
+    """Нормализует markdown-артефакты для plain-text Telegram сообщений."""
+    cleaned = text.replace("**", "").replace("__", "")
+    cleaned = re.sub(r"(?m)^\s*-\s+", "• ", cleaned)
+    cleaned = re.sub(r"(?m)^\s*\.\s+", "• ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
+def _apply_cta_by_context(text: str, callback_data: str | None = None) -> str:
+    """Добавляет CTA только для разделов, где он уместен."""
+    if callback_data and callback_data in NO_CTA_CALLBACKS:
+        return text
+    return _with_sales_cta(text)
+
+
 async def send_answer(
     message,
     text: str,
@@ -1720,6 +1746,7 @@ async def send_answer(
 ) -> None:
     """Отправляет ответ, автоматически добавляя кнопки записи при маркере."""
     clean_text, has_marker = extract_booking_marker(text)
+    clean_text = _cleanup_outgoing_text(clean_text)
     clean_text = _with_sales_cta(clean_text)
     clean_text, links = _extract_links(clean_text)
     show_booking = has_marker or force_booking
@@ -1757,6 +1784,19 @@ def _with_sales_cta(text: str) -> str:
     else:
         cta = default_cta
 
+    # В чисто информационных блоках не добавляем продающий хвост.
+    no_cta_markers = (
+        "мы находимся по адресу",
+        "яндекс-карты",
+        "хотите увидеть результат «до/после»",
+        "в студии есть кофе",
+        "да, есть бесплатный wi-fi",
+        "да, предусмотрены условия для маломобильных",
+        "актуальные скидки",
+    )
+    if any(marker in text_lower for marker in no_cta_markers):
+        return text
+
     if cta in text or default_cta in text:
         return text
     if text == FALLBACK_RESPONSE:
@@ -1786,20 +1826,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         kb_answer, kb_score, kb_question = _find_kb_answer(user_text)
         if kb_answer:
             _log_kb_match(user_id, user_text, kb_question, kb_score, "matched")
+        elif kb_question:
+            _log_kb_match(user_id, user_text, kb_question, kb_score, "no_match")
+
+        history = get_history(context)
+        append_to_history(context, "user", user_text)
+        gpt_detail_query = (
+            f"{user_text}\n\n"
+            "Дайте подробный ответ по услуге на основе базы знаний без сокращений: "
+            "что это, что входит, сроки, стоимость от, когда рекомендуется. "
+            "Если есть список этапов — перечислите его полностью.\n"
+            "В конце обязательно добавьте: 'Записаться можно по кнопке ниже ⬇️ [ЗАПИСЬ]'."
+        )
+        if kb_answer:
+            gpt_detail_query += f"\n\nОпорный фрагмент из базы знаний:\n{kb_answer}"
+
+        detail_text = await get_gpt_response(gpt_detail_query, history)
+        if detail_text == FALLBACK_RESPONSE and kb_answer:
             detail_text = f"{kb_answer}\n\nЗаписаться можно по кнопке ниже ⬇️ [ЗАПИСЬ]"
-            append_to_history(context, "user", user_text)
-            append_to_history(context, "assistant", detail_text)
-            await send_answer(query.message, detail_text)
-        else:
-            if kb_question:
-                _log_kb_match(user_id, user_text, kb_question, kb_score, "no_match")
-            fallback = (
-                "Сейчас покажу кратко по этой услуге, а для полного детального расчета "
-                "под ваш автомобиль помогу в чате.\n\n"
-                "Записаться можно по кнопке ниже ⬇️ [ЗАПИСЬ]"
-            )
-            append_to_history(context, "assistant", fallback)
-            await send_answer(query.message, fallback, force_booking=True)
+        append_to_history(context, "assistant", detail_text)
+        await send_answer(query.message, detail_text)
 
         topic = TOPIC_LABELS.get(source_cb, "услугой")
         context.chat_data["last_topic"] = topic
@@ -1917,11 +1963,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if user_text:
             append_to_history(context, "user", user_text)
         if query.data == "sub_shop_recommend":
-            answer = _with_sales_cta(SHOP_RECOMMEND_ANSWER)
+            answer = _apply_cta_by_context(SHOP_RECOMMEND_ANSWER, query.data)
         elif query.data == "sub_shop_ozon":
-            answer = _with_sales_cta(SHOP_OZON_ANSWER)
+            answer = _apply_cta_by_context(SHOP_OZON_ANSWER, query.data)
         else:
-            answer = _with_sales_cta(SHOP_DISCOUNTS_ANSWER)
+            answer = _apply_cta_by_context(SHOP_DISCOUNTS_ANSWER, query.data)
         append_to_history(context, "assistant", answer)
         await query.message.reply_text(
             answer,
@@ -1980,7 +2026,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     sub_menu = SUB_MENUS.get(query.data)
     if sub_menu:
         clean_text, has_marker = extract_booking_marker(answer)
-        clean_text = _with_sales_cta(clean_text)
+        clean_text = _cleanup_outgoing_text(clean_text)
+        clean_text = _apply_cta_by_context(clean_text, query.data)
         clean_text = _with_detail_offer(clean_text, query.data)
         clean_text, links = _extract_links(clean_text)
         reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
@@ -1993,7 +2040,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         if query.data in DETAILABLE_CALLBACKS:
             clean_text, has_marker = extract_booking_marker(answer)
-            clean_text = _with_sales_cta(clean_text)
+            clean_text = _cleanup_outgoing_text(clean_text)
+            clean_text = _apply_cta_by_context(clean_text, query.data)
             clean_text = _with_detail_offer(clean_text, query.data)
             clean_text, links = _extract_links(clean_text)
             reply_markup = _build_reply_markup(has_marker, links)
@@ -2196,6 +2244,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             sub_menu = SUB_MENUS.get(intent)
             if sub_menu:
                 clean_text, has_marker = extract_booking_marker(answer)
+                clean_text = _cleanup_outgoing_text(clean_text)
                 clean_text = _with_sales_cta(clean_text)
                 clean_text, links = _extract_links(clean_text)
                 clean_text = await _finalize_response_text(clean_text, user_lang)
