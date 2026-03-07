@@ -728,6 +728,7 @@ def _is_short_followup_request(user_text: str) -> bool:
         return False
     triggers = {
         "подскажи", "подскажите", "давай", "ок", "хорошо", "понятно",
+        "сориентируй", "сориентируйте", "ориентируй", "ориентируйте",
         "что лучше", "что посоветуешь", "и что", "и как",
     }
     return text in triggers
@@ -906,8 +907,22 @@ def _emoji_count(text: str) -> int:
 def _trim_to_max_chars(text: str, max_chars: int = 1000) -> str:
     if len(text) <= max_chars:
         return text
-    clipped = text[: max_chars - 1].rstrip()
-    return f"{clipped}…"
+    reserve = len("\n\nЕсли нужно, продолжу детали в следующем сообщении.")
+    hard_limit = max(200, max_chars - reserve)
+    raw = text[:hard_limit]
+
+    # Предпочитаем завершать ответ по границе абзаца/предложения.
+    pivot = max(
+        raw.rfind("\n\n"),
+        raw.rfind(". "),
+        raw.rfind("! "),
+        raw.rfind("? "),
+        raw.rfind("\n"),
+    )
+    clipped = (raw[:pivot] if pivot >= int(hard_limit * 0.6) else raw).rstrip()
+    if clipped and clipped[-1] not in ".!?":
+        clipped += "."
+    return f"{clipped}\n\nЕсли нужно, продолжу детали в следующем сообщении."
 
 
 def _enforce_emoji_range(text: str, min_count: int = 2, max_count: int = 4) -> str:
@@ -964,9 +979,40 @@ async def _finalize_response_text(text: str, user_lang: str) -> str:
     """Жестко применяет ограничения: язык, длина, эмодзи."""
     out = await _translate_text_if_needed(text, user_lang)
     out = _trim_to_max_chars(out, 1000)
-    out = _enforce_emoji_range(out, min_count=2, max_count=4)
+    out = _enforce_emoji_range(out, min_count=0, max_count=4)
     out = _trim_to_max_chars(out, 1000)
     return out
+
+
+def _split_text_chunks(text: str, max_chars: int = 900) -> list[str]:
+    """Делит длинный текст на смысловые части без потери содержания."""
+    content = (text or "").strip()
+    if not content:
+        return [""]
+    if len(content) <= max_chars:
+        return [content]
+
+    chunks: list[str] = []
+    rest = content
+    while len(rest) > max_chars:
+        window = rest[:max_chars]
+        cut = max(
+            window.rfind("\n\n"),
+            window.rfind(". "),
+            window.rfind("! "),
+            window.rfind("? "),
+            window.rfind("\n"),
+            window.rfind(" "),
+        )
+        if cut < int(max_chars * 0.55):
+            cut = max_chars
+        part = rest[:cut].strip()
+        if part:
+            chunks.append(part)
+        rest = rest[cut:].lstrip()
+    if rest:
+        chunks.append(rest)
+    return chunks
 
 
 def _char_ngrams(text: str, n: int = 3) -> set[str]:
@@ -1065,7 +1111,7 @@ ON_TOPIC_HINTS = (
     "стекл", "скол", "трещин", "защит", "салон", "химчист", "деконтам",
     "подкапот", "самообслуж", "пост", "аренда", "цена", "стоим", "прайс",
     "адрес", "график", "запис", "yclients", "ozon", "магазин", "скидк", "акци",
-    "чат", "помог", "консультац",
+    "чат", "помог", "консультац", "сориентир", "ориентир",
     "bearlake",
 )
 
@@ -2069,17 +2115,24 @@ async def send_answer(
     else:
         links = []
     show_booking = has_marker or force_booking
+    chunks = _split_text_chunks(clean_text, max_chars=900)
     if show_booking:
-        clean_text += PHONE_LINE
-    clean_text = await _finalize_response_text(clean_text, user_lang)
+        if len(chunks[-1]) + len(PHONE_LINE) <= 980:
+            chunks[-1] = f"{chunks[-1]}{PHONE_LINE}"
+        else:
+            chunks.append(PHONE_LINE.strip())
+
     reply_markup = _build_reply_markup(show_booking, links)
     if nav_context:
         reply_markup = _with_navigation_markup(reply_markup, nav_context)
-    await message.reply_text(
-        clean_text,
-        reply_markup=reply_markup,
-        disable_web_page_preview=True,
-    )
+    for idx, chunk in enumerate(chunks):
+        finalized = await _finalize_response_text(chunk, user_lang)
+        is_last = idx == len(chunks) - 1
+        await message.reply_text(
+            finalized,
+            reply_markup=reply_markup if is_last else None,
+            disable_web_page_preview=True,
+        )
 
 
 def _with_sales_cta(text: str) -> str:
@@ -2140,6 +2193,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         pass
 
     user_id = update.effective_user.id if update.effective_user else "unknown"
+    if query.data == "menu_back_text":
+        query.data = "menu_back_menu"
 
     if query.data and (query.data.startswith("detail::") or query.data.startswith("detail_skip::")):
         text = "Эти старые кнопки отключены. Выберите, пожалуйста, конкретную услугу в актуальном меню ⬇️"
@@ -2495,6 +2550,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     logger.info("Сообщение от %s: %r", user_id, user_text)
 
     log_question(user_id, user_text)
+
+    text_lower = user_text.strip().lower()
+    if text_lower in {"назад", "⬅️ назад"}:
+        last_callback = context.chat_data.get("last_menu_callback")
+        target_callback = BACK_TARGETS.get(last_callback, last_callback) if last_callback else None
+        if target_callback == "menu_shop":
+            await update.message.reply_text(
+                "Выберите раздел магазина по кнопкам ниже ⬇️",
+                reply_markup=SHOP_KEYBOARD,
+                disable_web_page_preview=True,
+            )
+            return
+        if target_callback and target_callback in STATIC_MENU_ANSWERS:
+            answer = STATIC_MENU_ANSWERS[target_callback]
+            await send_answer(update.message, answer, user_lang=user_lang, nav_context=target_callback)
+            return
+        await update.message.reply_text("Главное меню ⬇️", reply_markup=GREETING_KEYBOARD)
+        return
+    if text_lower in {"меню", "главное меню", "в меню"}:
+        await update.message.reply_text("Главное меню ⬇️", reply_markup=GREETING_KEYBOARD)
+        return
 
     if _is_short_followup_request(user_text):
         last_topic = context.chat_data.get("last_topic", "")
