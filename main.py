@@ -13,7 +13,7 @@ import pathlib
 
 load_dotenv()
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -77,9 +77,15 @@ logger.addHandler(console_handler)
 logger.propagate = False
 
 # ================== КЛАВИАТУРЫ ==================
+YCLIENTS_URL = "https://n1024167.yclients.com/"
+
 BOOKING_KEYBOARD = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/"))],
-    [InlineKeyboardButton("✅ Я записался", callback_data="booking_done")],
+    [InlineKeyboardButton("📅 Записаться онлайн", callback_data="booking_start")],
+])
+
+BOOKING_OPEN_KEYBOARD = InlineKeyboardMarkup([
+    [InlineKeyboardButton("🌐 Открыть форму записи (YClients)", url=YCLIENTS_URL)],
+    [InlineKeyboardButton("🏠 Главное меню", callback_data="menu_main")],
 ])
 
 PHONE_LINE = "\n\n📞 Или позвоните администратору: +7 (926) 021-60-00"
@@ -105,7 +111,7 @@ GREETING_KEYBOARD = InlineKeyboardMarkup([
         InlineKeyboardButton("🔥 Новинки и акции", url="https://t.me/bearlake_detailing"),
     ],
     [
-        InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/")),
+        InlineKeyboardButton("📅 Записаться онлайн", callback_data="booking_start"),
     ],
 ])
 
@@ -123,7 +129,7 @@ WASH_KEYBOARD = InlineKeyboardMarkup([
         InlineKeyboardButton("🛠 Подкапотное пространство (от 9 000 ₽)", callback_data="sub_engine_wash"),
     ],
     [
-        InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/")),
+        InlineKeyboardButton("📅 Записаться онлайн", callback_data="booking_start"),
     ],
 ])
 
@@ -147,7 +153,7 @@ SERVICES_KEYBOARD = InlineKeyboardMarkup([
         InlineKeyboardButton("💰 Все цены", callback_data="sub_all_prices"),
     ],
     [
-        InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/")),
+        InlineKeyboardButton("📅 Записаться онлайн", callback_data="booking_start"),
     ],
 ])
 
@@ -164,45 +170,26 @@ SELF_KEYBOARD = InlineKeyboardMarkup([
         InlineKeyboardButton("🧴 Купить автохимию", callback_data="menu_shop"),
     ],
     [
-        InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/")),
+        InlineKeyboardButton("📅 Записаться онлайн", callback_data="booking_start"),
     ],
 ])
 
 SHOP_KEYBOARD = InlineKeyboardMarkup([
     [
-        InlineKeyboardButton("🧴 Что рекомендуете", callback_data="sub_shop_recommend"),
-        InlineKeyboardButton("🏷 Скидки и промокоды", callback_data="sub_shop_discounts"),
-    ],
-    [
         InlineKeyboardButton("🛒 Магазин на Ozon", callback_data="sub_shop_ozon"),
         InlineKeyboardButton("🏪 Сайт студии", url="https://bearlake.clients.site/"),
     ],
     [
-        InlineKeyboardButton("🛒 Открыть Ozon", url="https://ozon.ru/t/bal1Akq"),
-    ],
-    [
-        InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/")),
+        InlineKeyboardButton("⬅️ Назад", callback_data="menu_main"),
+        InlineKeyboardButton("🏠 Главное меню", callback_data="menu_main"),
     ],
 ])
 
-COMFORT_KEYBOARD = InlineKeyboardMarkup([
-    [
-        InlineKeyboardButton("☕ Кофе и перекусы", callback_data="sub_comfort_food"),
-        InlineKeyboardButton("📶 Wi-Fi и зона отдыха", callback_data="sub_comfort_wifi"),
-    ],
-    [
-        InlineKeyboardButton("❄️ Климат в помещении", callback_data="sub_comfort_climate"),
-        InlineKeyboardButton("♿ Доступная среда", callback_data="sub_comfort_access"),
-    ],
-    [
-        InlineKeyboardButton("📅 Записаться онлайн", web_app=WebAppInfo(url="https://n1024167.yclients.com/")),
-    ],
-])
+COMFORT_KEYBOARD = InlineKeyboardMarkup([])
 
 SUB_MENUS = {
     "menu_services": SERVICES_KEYBOARD,
     "menu_shop": SHOP_KEYBOARD,
-    "menu_comfort": COMFORT_KEYBOARD,
     "sub_wash": WASH_KEYBOARD,
 }
 
@@ -296,6 +283,8 @@ MENU_PROMPTS = {
     "sub_wash": "Какие форматы мойки и очистки вы предлагаете? Расскажите про быструю, комплексную мойку, деконтаминацию и мойку подкапотного пространства.",
     "sub_wash_twophase": "Расскажите подробно про быструю детейлинг-мойку — что входит, сколько стоит, сколько по времени?",
     "sub_wash_complex": "Расскажите подробно про комплексную Детейлинг мойку Bearlake — что входит, сколько стоит, сколько по времени?",
+    "sub_decon": "Расскажите подробно про деконтаминацию ЛКП — что входит, когда нужна и сколько занимает по времени?",
+    "sub_engine_wash": "Расскажите подробно про мойку подкапотного пространства — что входит, как обеспечивается безопасность и сколько по времени?",
     "sub_polish": "Сколько стоит полировка и что включено?",
     "sub_protection": "Какие защитные покрытия вы предлагаете? Сколько стоит защита ЛКП?",
     "sub_interior": "Расскажите про детейлинг салона",
@@ -319,46 +308,39 @@ MENU_PROMPTS = {
 }
 
 MASTER_SERVICE_PRICE_NOTE = (
-    "\n\n*Стоимость услуг мастеров зависит от класса авто (S / M / L) "
-    "и уточняется после осмотра.*"
+    "\n\nСтоимость услуг мастеров зависит от класса авто (S / M / L) "
+    "и уточняется после осмотра."
 )
 
 STATIC_MENU_ANSWERS = {
     "menu_services": (
         "🔧 Услуги мастеров BEARLAKE\n\n"
-        "🟦 Что получите:\n"
+        "Что получите:\n"
         "• Профессиональный подход и проверенные технологии\n"
         "• Подбор решения под задачу и сценарий эксплуатации\n"
-        "• Понятный план работ, сроки и стоимость от\n\n"
+        "• Понятный план работ, реалистичные сроки и прозрачную стоимость\n\n"
         "👇 Выберите услугу ниже — и сразу дам подробный разбор по этапам, химии и результату."
     ),
     "menu_self": (
-        "🚿 Пост самообслуживания — это профессиональная студия, доступная 24/7 для самостоятельного ухода за автомобилем.\n"
-        "Подходит как для энтузиастов, так и для профессионалов детейлинга.\n\n"
-        "🟪 Условия:\n"
-        "• Минимальное время аренды — 2 часа.\n"
-        "• Максимальное время не ограничено: можно арендовать на несколько дней по согласованию.\n"
-        "• Предварительная запись — желательна, чтобы избежать ожидания.\n\n"
-        "🟦 Оборудование:\n"
-        "• Аппарат высокого давления (АВД)\n"
-        "• Шланг для промывки, горячая вода\n"
-        "• Мощный пылесос\n"
-        "• Турбосушка\n"
-        "• Ведра и пенокомплекты\n"
-        "• Кисти, варежки, аксессуары для колёс и арок\n"
-        "• Профессиональное освещение\n"
-        "• Комфортная зона хранения вещей и отдыха\n\n"
-        "🟨 Цены:\n"
-        "• Базовая аренда — 700 ₽/час (только оборудование)\n"
-        "• Аренда с расходниками (шампунь, губка, микрофибра) — 900 ₽/час\n\n"
-        "🛡 Правила и безопасность:\n"
-        "• При наличии квалификации вы можете выполнять те же этапы ухода, что и мастера,\n"
-        "  соблюдая правила и технику безопасности.\n"
-        "• Запрещены грязные ремонтные работы, агрессивные жидкости и действия,\n"
-        "  способные повредить оборудование.\n\n"
-        "Если хотите, подскажу оптимальный тариф самообслуживания под ваш сценарий 🚿\n\n"
-        "📞 Для записи позвоните администратору: +7 (926) 021-60-00,\n"
-        "чтобы мы могли подготовить пост наилучшим образом к Вашему приезду."
+        "🚿 Пост самообслуживания 24/7 — профессиональная студия для самостоятельного ухода за авто.\n\n"
+        "Условия:\n"
+        "• Минимальная аренда — 2 часа.\n"
+        "• Максимум не ограничен: можно арендовать на несколько дней по согласованию.\n"
+        "• Запись заранее желательна, чтобы пост был свободен к вашему приезду.\n"
+        "• Первый визит — по согласованию с 9:00 до 22:00.\n\n"
+        "Оборудование:\n"
+        "• АВД, шланг, горячая вода.\n"
+        "• Мощный пылесос и турбосушка.\n"
+        "• Ведра, пенокомплекты, кисти, варежки, аксессуары для колес и арок.\n"
+        "• Профессиональное освещение и зона отдыха.\n\n"
+        "Стоимость:\n"
+        "• 700 ₽/час — оборудование.\n"
+        "• 900 ₽/час — оборудование + расходники (шампунь, губка, микрофибра).\n\n"
+        "Правила и безопасность:\n"
+        "• При квалификации можно выполнять те же этапы ухода, что и мастера.\n"
+        "• Обязательно соблюдать правила студии и технику безопасности.\n"
+        "• Запрещены грязные ремонтные работы и агрессивные жидкости.\n\n"
+        "📞 Для записи: +7 (926) 021-60-00 или кнопка «Записаться онлайн» ниже."
     ),
     "menu_shop": (
         "🧴 Магазин автохимии\n\n"
@@ -369,27 +351,35 @@ STATIC_MENU_ANSWERS = {
     ),
     "menu_comfort": (
         "☕ Комфорт в студии\n\n"
-        "🟦 Для клиентов:\n"
-        "• Кофе, чай и легкие перекусы\n"
-        "• Wi-Fi и зона отдыха\n"
-        "• Санузел и место для хранения вещей\n"
-        "• Отопление и кондиционирование\n"
-        "• Доступная среда\n\n"
-        "👇 Выберите интересующий пункт ниже."
+        "Что доступно для клиентов:\n"
+        "• Кофе, чай и легкие перекусы во время ожидания\n"
+        "• Бесплатный Wi‑Fi и зона отдыха\n"
+        "• Санузел и место для хранения личных вещей\n"
+        "• Комфортная температура в любое время года (отопление/кондиционирование)\n"
+        "• Условия для маломобильных гостей\n\n"
+        "Пока автомобиль в работе, Вы можете спокойно отдохнуть в студии.\n"
+        "Если нужен конкретный формат ожидания или есть индивидуальные пожелания — напишите, все организуем."
     ),
     "menu_address": (
         "📍 Адрес и график\n\n"
-        "🟦 Где мы:\n"
-        "• Московская область, г.о. Пушкинский, пос. Нагорное, 8А\n"
-        "• Работаем ежедневно по предварительной записи\n"
-        "• Рядом есть бесплатная парковка\n\n"
-        "🗺 Яндекс-карты: https://yandex.ru/maps/org/bearlake/46971604224/?ll=38.023081%2C56.067485&z=17"
+        "Адрес:\n"
+        "• Московская область, г.о. Пушкинский, пос. Нагорное, 8А\n\n"
+        "График работы:\n"
+        "• Услуги мастеров — ежедневно по предварительной записи\n"
+        "• Пост самообслуживания — 24/7\n"
+        "• Первое посещение поста самообслуживания — по согласованию с 9:00 до 22:00\n\n"
+        "Дополнительно:\n"
+        "• Рядом есть бесплатная парковка\n"
+        "• Доступен ремонт сколов и трещин стекла по записи\n\n"
+        "Контакты:\n"
+        "• Администратор: +7 (926) 021-60-00\n"
+        "• Яндекс-карты: https://yandex.ru/maps/org/bearlake/46971604224/?ll=38.023081%2C56.067485&z=17"
     ),
     "menu_portfolio": (
         "📸 Примеры работ\n\n"
-        "🟦 Где посмотреть результат «до/после»:\n"
-        "• Сайт студии: https://bearlake.clients.site/\n"
-        "• Telegram-канал: https://t.me/bearlake_detailing"
+        "Где посмотреть результат «до/после»:\n"
+        "• 🏪 Сайт студии: https://bearlake.clients.site/\n"
+        "• 🔥 Telegram-канал: https://t.me/bearlake_detailing"
     ),
     "menu_discounts": (
         "🏷 Скидки и акции\n\n"
@@ -400,7 +390,7 @@ STATIC_MENU_ANSWERS = {
     ),
     "sub_wash": (
         "🚿 Мойка и очистка\n\n"
-        "🟦 Доступные форматы:\n"
+        "Доступные форматы:\n"
         "• Быстрая детейлинг-мойка\n"
         "• Комплексная детейлинг-мойка\n"
         "• Деконтаминация ЛКП\n"
@@ -408,100 +398,164 @@ STATIC_MENU_ANSWERS = {
         "👇 Выберите формат ниже — дам подробный разбор по технологии, химии, срокам и стоимости."
     ),
     "sub_wash_twophase": (
-        "Быстрая детейлинг-мойка — от 3 000 ₽, от 1 часа.\n"
-        "Идеальный формат, когда важно быстро привести автомобиль в порядок без компромиссов по качеству.\n\n"
+        "🚿 Быстрая детейлинг-мойка\n\n"
+        "Стоимость и срок:\n"
+        "• От 3 000 ₽\n"
+        "• От 1 часа\n\n"
         "Что входит:\n"
-        "• бережная двухфазная мойка кузова\n"
-        "• мойка внутренних порогов\n"
-        "• мойка/пылесос ковриков\n"
-        "• продувка замков\n\n"
-        "Результат: чистый и свежий автомобиль в короткий срок и поддержание аккуратного состояния ЛКП."
+        "• Бережная двухфазная мойка кузова\n"
+        "• Мойка внутренних порогов\n"
+        "• Мойка/пылесос ковриков\n"
+        "• Продувка замков\n\n"
+        "Результат:\n"
+        "• Чистый и свежий автомобиль в короткий срок\n"
+        "• Поддержание аккуратного состояния ЛКП\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_wash_complex": (
-        "Комплексная детейлинг-мойка Bearlake — от 8 000 ₽, от 4 часов.\n"
-        "Включает:\n"
-        "• бережную 2-фазную мойку кузова и внутренних порогов\n"
-        "• чистку труднодоступных мест кистями\n"
-        "• тщательную чистку дисков и шин с пропиткой резины\n"
-        "• полную продувку кузова горячим воздухом\n"
-        "• очистку стекол снаружи и внутри\n"
-        "• уборку салона и багажника пылесосом\n"
-        "• глубокую чистку салонных ковров\n"
-        "• деликатную очистку интерьера с консервацией\n"
-        "• обработку ЛКП и дисков керамическим квик-детейлером\n\n"
-        "Это формат «всё и сразу», когда нужен максимальный визуальный и тактильный результат внутри и снаружи.\n"
-        "При сложных загрязнениях может потребоваться деконтаминация."
+        "🧽 Комплексная детейлинг-мойка Bearlake\n\n"
+        "Стоимость и срок:\n"
+        "• От 8 000 ₽\n"
+        "• От 4 часов\n\n"
+        "Что входит:\n"
+        "• Бережная 2-фазная мойка кузова и внутренних порогов\n"
+        "• Чистка труднодоступных мест кистями\n"
+        "• Тщательная чистка дисков и шин с пропиткой резины\n"
+        "• Полная продувка кузова горячим воздухом\n"
+        "• Очистка стекол снаружи и внутри\n"
+        "• Уборка салона и багажника пылесосом\n"
+        "• Глубокая чистка салонных ковров\n"
+        "• Деликатная очистка интерьера с консервацией\n"
+        "• Обработка ЛКП и дисков керамическим квик-детейлером\n\n"
+        "Результат:\n"
+        "• Максимальный визуальный и тактильный эффект внутри и снаружи\n"
+        "• При сложных загрязнениях может дополнительно потребоваться деконтаминация\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_polish": (
-        "Полировка ЛКП (Light Polish) — от 25 000 ₽, от 12 часов.\n"
-        "Перед услугой обязательна быстрая или комплексная мойка.\n"
+        "✨ Полировка ЛКП (Light Polish)\n\n"
+        "Стоимость и срок:\n"
+        "• От 25 000 ₽\n"
+        "• От 12 часов\n"
+        "• Перед услугой обязательна быстрая или комплексная мойка\n\n"
         "Что входит:\n"
-        "• подготовительная детейлинг-мойка\n"
-        "• бережная коррекция ЛКП\n"
-        "• удаление до 50% царапин\n"
-        "• восстановление блеска и гладкости\n"
-        "• защита ЛКП на 3–4 месяца (финишный силант)\n\n"
-        "Работаем по двухступенчатой технологии с химией Optimum Polymer Technologies и NXTZEN, "
-        "используем круги Lake Country и оборудование Zentool / LC Power Tools / FLEX.\n"
-        "Результат: глубокий зеркальный блеск и заметно более свежий внешний вид автомобиля."
+        "• Подготовительная детейлинг-мойка\n"
+        "• Бережная коррекция ЛКП\n"
+        "• Удаление до 50% царапин\n"
+        "• Восстановление блеска и гладкости\n"
+        "• Защита ЛКП на 3–4 месяца (финишный силант)\n\n"
+        "Технология и материалы:\n"
+        "• Двухступенчатая технология студии\n"
+        "• Премиальная химия Optimum Polymer Technologies и NXTZEN\n"
+        "• Круги Lake Country, оборудование Zentool / LC Power Tools / FLEX\n\n"
+        "Результат:\n"
+        "• Глубокий зеркальный блеск\n"
+        "• Более свежий и аккуратный внешний вид авто\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_protection": (
-        "По защите ЛКП доступны:\n"
-        "• керамические покрытия — от 5 000 ₽, от 4 часов\n"
-        "• полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽, от 2 дней\n\n"
-        "Керамика подбирается по задачам и сроку службы: легкие составы (3–12 месяцев) "
-        "и профессиональные покрытия (2–3 года).\n"
-        "Доступны, в том числе, NXTZEN Graphene Serum, NXTZEN Elite GSO2 и Opti-Coat Pro Plus.\n"
-        "По пленкам доступны варианты NXTZEN / SKINCARS / Crystal Ultra Gloss — защита от сколов, "
-        "царапин, пескоструя и реагентов."
+        "🛡 Защитные покрытия для ЛКП\n\n"
+        "Варианты защиты:\n"
+        "• Керамические покрытия — от 5 000 ₽, от 4 часов\n"
+        "• Полиуретановые пленки (зоны риска/кузов) — от 85 000 ₽, от 2 дней\n\n"
+        "Составы и срок службы:\n"
+        "• Легкие керамики — 3–12 месяцев\n"
+        "• Профессиональные покрытия — 2–3 года\n"
+        "• Доступны: NXTZEN Graphene Serum, NXTZEN Elite GSO2, Opti-Coat Pro Plus\n\n"
+        "Эффект: защита от сколов, царапин, пескоструя, реагентов и более простой уход за кузовом.\n"
+        "Стоимость и сроки зависят от выбранного состава и класса авто.\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_decon": (
-        "Деконтаминация ЛКП — от 6 000 ₽, от 2 часов.\n"
-        "Перед услугой обязательна быстрая или комплексная мойка.\n"
-        "Удаляем металлические вкрапления, битум, смолы и стойкие органические загрязнения.\n"
-        "Работаем премиальной химией Optimum Polymer Technologies, NXTZEN и TAC System.\n"
-        "Результат: гладкое и чистое ЛКП, профилактика коррозии и подготовка к следующим этапам ухода."
+        "🧪 Деконтаминация ЛКП\n\n"
+        "Стоимость и срок:\n"
+        "• От 6 000 ₽\n"
+        "• От 2 часов\n"
+        "• Перед услугой обязательна быстрая или комплексная мойка\n\n"
+        "Что делаем:\n"
+        "• Удаляем металлические вкрапления, битум, смолы и стойкую органику\n"
+        "• Используем премиальную химию Optimum Polymer Technologies, NXTZEN и TAC System\n\n"
+        "Результат:\n"
+        "• Гладкое и чистое ЛКП\n"
+        "• Профилактика коррозии\n"
+        "• Подготовка кузова к следующим этапам ухода\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_engine_wash": (
-        "Мойка подкапотного пространства — от 9 000 ₽, от 4 часов.\n"
-        "Что делаем: предварительная изоляция чувствительных компонентов, "
-        "деликатная мойка, полная продувка и обработка защитным консервантом.\n"
-        "Результат: чистое подкапотное пространство, более простая диагностика "
-        "и поддержание ресурса узлов."
+        "🛠 Мойка подкапотного пространства\n\n"
+        "Стоимость и срок:\n"
+        "• От 9 000 ₽\n"
+        "• От 4 часов\n\n"
+        "Что делаем:\n"
+        "• Предварительно изолируем чувствительные компоненты\n"
+        "• Проводим деликатную мойку без риска для узлов\n"
+        "• Выполняем полную продувку и обработку защитным консервантом\n\n"
+        "Результат:\n"
+        "• Чистое подкапотное пространство\n"
+        "• Более простая диагностика\n"
+        "• Поддержание ресурса узлов\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_interior": (
-        "Детейлинг чистка интерьера (химчистка) — от 28 000 ₽, 1 день.\n"
-        "Перед химчисткой требуется мойка.\n"
+        "🧹 Детейлинг чистка интерьера (химчистка)\n\n"
+        "Стоимость и срок:\n"
+        "• От 28 000 ₽\n"
+        "• 1 день\n"
+        "• Перед химчисткой требуется мойка\n\n"
         "Что входит:\n"
-        "• удаление загрязнений и пыли со всех поверхностей\n"
-        "• глубокая чистка карпета салона и багажника\n"
-        "• очистка сидений, дверных карт, панели и дефлекторов\n"
-        "• чистка стекол изнутри и проработка труднодоступных мест\n\n"
-        "Дополнительно можно нанести защиту интерьера:\n"
+        "• Удаление загрязнений и пыли со всех поверхностей\n"
+        "• Глубокая чистка карпета салона и багажника\n"
+        "• Очистка сидений, дверных карт, панели и дефлекторов\n"
+        "• Чистка стекол изнутри и проработка труднодоступных зон\n\n"
+        "Дополнительная защита интерьера:\n"
         "• NXTZEN L-Coat (1–2 года)\n"
         "• Opti-Guard Leather (1–2 года)\n"
         "• NXTZEN Fiber Coat (6–9 месяцев)\n\n"
-        "Результат: свежий и аккуратный салон, комфортный микроклимат и защита материалов от износа."
+        "Результат:\n"
+        "• Свежий и аккуратный салон\n"
+        "• Комфортный микроклимат в авто\n"
+        "• Защита материалов от износа\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_glass": (
-        "Бронирование лобового стекла — от 30 000 ₽, от 1 дня.\n"
-        "Виды пленок: Rayno Crystal Shield, Never Scratch.\n"
-        "Что входит: тщательная очистка/обезжиривание и профессиональная установка.\n"
-        "Пленка защищает от сколов, трещин, пескоструя и царапин, "
-        "остается прозрачной и не искажает обзор."
+        "🪟 Бронирование лобового стекла\n\n"
+        "Стоимость и срок:\n"
+        "• От 30 000 ₽\n"
+        "• От 1 дня\n\n"
+        "Материалы:\n"
+        "• Rayno Crystal Shield\n"
+        "• Never Scratch\n\n"
+        "Что входит:\n"
+        "• Тщательная очистка и обезжиривание стекла\n"
+        "• Профессиональный раскрой и установка пленки\n"
+        "• Контроль прозрачности и финальная проверка\n\n"
+        "Результат:\n"
+        "• Защита от сколов, пескоструя и мелких царапин\n"
+        "• Снижение риска развития трещины после мелких ударов\n"
+        "• Сохранение прозрачности без искажений обзора\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_chips": (
-        "Ремонт трещин и сколов стекла — от 3 500 ₽, от 1 часа.\n"
-        "Задача услуги — остановить дальнейшее разрушение стекла и "
-        "сделать дефект менее заметным."
+        "🔧 Ремонт сколов и трещин стекла\n\n"
+        "Стоимость и срок:\n"
+        "• От 3 500 ₽\n"
+        "• От 1 часа\n\n"
+        "Что делаем:\n"
+        "• Останавливаем дальнейшее разрушение стекла\n"
+        "• Восстанавливаем целостность поврежденной зоны\n"
+        "• Делаем дефект менее заметным визуально\n\n"
+        "Важно понимать:\n"
+        "• Полное исчезновение скола не гарантируется\n"
+        "• Чем раньше обратиться после появления дефекта, тем лучше результат\n\n"
+        "Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже."
         + MASTER_SERVICE_PRICE_NOTE
     ),
     "sub_self_equip": (
@@ -605,8 +659,13 @@ STRICT_TEXT_INTENTS = {
     "menu_advantages",
 }
 
-# Для карточек услуг по кнопкам приоритет отдаем KB/GPT, а не шаблонам.
-AI_FIRST_BUTTON_CALLBACKS = {
+# Для нажатий по кнопкам используем выверенные статические карточки.
+# AI при этом остается в свободном чате (handle_message).
+AI_FIRST_BUTTON_CALLBACKS = set()
+
+NO_CTA_CALLBACKS = {
+    "menu_services",
+    "sub_wash",
     "sub_wash_twophase",
     "sub_wash_complex",
     "sub_decon",
@@ -620,9 +679,6 @@ AI_FIRST_BUTTON_CALLBACKS = {
     "sub_self_price",
     "sub_self_included",
     "sub_self_rules",
-}
-
-NO_CTA_CALLBACKS = {
     "menu_address",
     "menu_portfolio",
     "menu_comfort",
@@ -1045,15 +1101,17 @@ def _is_complex_consultation(user_text: str) -> bool:
 def _build_consultation_query(user_text: str) -> str:
     """Формирует уточненный запрос к модели для консультаций."""
     return (
-        "Клиент просит помочь с подбором решения. Дай консультацию как опытный детейлер:\n"
-        "1) Короткий вывод по ситуации клиента.\n"
-        "2) Рекомендованный вариант (базовый/оптимальный/максимальный).\n"
-        "3) Почему именно так (2-4 аргумента без воды).\n"
-        "4) Что входит в предложенные услуги и ориентир по срокам.\n"
-        "5) В конце мягкий CTA к записи через кнопку [ЗАПИСЬ].\n"
+        "Пользователь просит помочь с подбором решения. Дай консультацию как опытный детейлер.\n"
+        "Пишите только во 2-м лице (на «Вы»), без формулировок «клиент интересуется/клиент уточнил».\n"
+        "Сделайте кратко и по делу:\n"
+        "• Короткий вывод по ситуации.\n"
+        "• Рекомендованный вариант (базовый/оптимальный/максимальный).\n"
+        "• Почему именно так (2-4 аргумента без воды).\n"
+        "• Что входит в предложенные услуги и ориентир по срокам.\n"
+        "• В конце мягкий CTA к записи через кнопку [ЗАПИСЬ].\n"
         "Обязательно учитывай, что стоимость услуг мастеров зависит от класса авто "
         "(S / M / L) и уточняется после осмотра.\n\n"
-        f"Запрос клиента: {user_text}"
+        f"Запрос пользователя: {user_text}"
     )
 
 
@@ -1074,18 +1132,103 @@ def _detect_consultation_priority(user_text: str) -> str | None:
 def _build_refined_consultation_query(base_request: str, priority: str, user_reply: str) -> str:
     """Формирует follow-up запрос с учетом приоритета клиента."""
     return (
-        "Клиент уточнил приоритет после консультации. Обнови рекомендацию:\n"
-        "1) Коротко подтверди, что понял приоритет.\n"
-        "2) Дай оптимальный пакет услуг под этот приоритет.\n"
-        "3) Укажи ориентир по срокам и стартовой стоимости.\n"
-        "4) Добавь 1 альтернативу (короче/дешевле или сильнее/дольше).\n"
-        "5) В конце мягкий CTA через [ЗАПИСЬ].\n"
+        "Пользователь уточнил приоритет после консультации. Обновите рекомендацию.\n"
+        "Пишите только во 2-м лице (на «Вы»), без фраз «клиент интересуется/клиент уточнил».\n"
+        "Никакой нумерации 1) 2) 3), используйте короткие блоки и списки.\n"
+        "Нужно дать:\n"
+        "• Короткое подтверждение, что приоритет понят.\n"
+        "• Оптимальный пакет услуг под этот приоритет.\n"
+        "• Ориентир по срокам и стартовой стоимости.\n"
+        "• Одну альтернативу (короче/дешевле или сильнее/дольше).\n"
+        "• В конце мягкий CTA через [ЗАПИСЬ].\n"
         "Обязательно учти: стоимость услуг мастеров зависит от класса авто "
         "(S / M / L) и уточняется после осмотра.\n\n"
-        f"Изначальный запрос клиента: {base_request}\n"
-        f"Уточнение клиента: {user_reply}\n"
-        f"Приоритет клиента: {priority}"
+        f"Изначальный запрос пользователя: {base_request}\n"
+        f"Уточнение пользователя: {user_reply}\n"
+        f"Приоритет пользователя: {priority}"
     )
+
+
+def _extract_budget_and_hours(user_text: str) -> tuple[int | None, int | None]:
+    """Достает бюджет (₽) и срок (часы) из произвольного текста."""
+    text = user_text.lower().replace(" ", "")
+    budget = None
+    hours = None
+
+    budget_match = re.search(r"(?:бюджет[=:]?)?(\d{3,7})(?:р|руб|₽)?", text)
+    if budget_match:
+        try:
+            budget = int(budget_match.group(1))
+        except ValueError:
+            budget = None
+
+    hours_match = re.search(r"(?:срок[=:]?)?(\d{1,2})(?:ч|час)", text)
+    if hours_match:
+        try:
+            hours = int(hours_match.group(1))
+        except ValueError:
+            hours = None
+
+    return budget, hours
+
+
+def _budget_time_recommendation(user_text: str) -> str | None:
+    """Возвращает релевантный подбор услуг по ограничению бюджет/срок."""
+    low = user_text.lower()
+    if not any(k in low for k in ("бюджет", "срок", "час", "часа", "часов")):
+        return None
+
+    budget, hours = _extract_budget_and_hours(user_text)
+    if budget is None and hours is None:
+        return None
+
+    options = [
+        ("🚿 Быстрая детейлинг-мойка", 3000, 1, "поддерживающая чистота кузова"),
+        ("🧪 Деконтаминация ЛКП", 6000, 2, "удаление битума, вкраплений и стойких загрязнений"),
+        ("🚿 Самообслуживание (базовый тариф)", 700, 2, "самостоятельный уход при фиксированном бюджете"),
+        ("🚿 Самообслуживание (с расходниками)", 900, 2, "самостоятельный уход с химией и расходниками"),
+    ]
+
+    matched: list[tuple[str, int, int, str]] = []
+    for name, price_from, min_hours, benefit in options:
+        if budget is not None and price_from > budget:
+            continue
+        if hours is not None and min_hours > hours:
+            continue
+        matched.append((name, price_from, min_hours, benefit))
+
+    class_hint = ""
+    class_match = re.search(r"\bкласс[а-я]*\s*([sml])\b", low)
+    if class_match:
+        class_hint = class_match.group(1).upper()
+
+    if not matched:
+        limit_text = []
+        if budget is not None:
+            limit_text.append(f"бюджете до {budget:,} ₽".replace(",", " "))
+        if hours is not None:
+            limit_text.append(f"сроке до {hours} ч")
+        limits = " и ".join(limit_text) if limit_text else "заданных ограничениях"
+        return (
+            f"Понимаю Ваш запрос. При {limits} услуги мастеров могут не поместиться в рамки.\n\n"
+            "Рекомендую два варианта:\n"
+            "• Самообслуживание 700 ₽/час (или 900 ₽/час с расходниками)\n"
+            "• Увеличить бюджет/срок, чтобы рассмотреть услуги мастеров\n\n"
+            "Если хотите, подберу оптимальный сценарий по шагам именно под Вашу задачу."
+        )
+
+    lines = ["Под Ваши ограничения подходят такие варианты:"]
+    for name, price_from, min_hours, benefit in matched[:3]:
+        lines.append(f"• {name} — от {price_from:,} ₽, от {min_hours} ч ({benefit})".replace(",", " "))
+    lines.append("")
+    if class_hint:
+        lines.append(
+            f"Для класса {class_hint}: финальная стоимость услуг мастеров уточняется после осмотра."
+        )
+    else:
+        lines.append("Финальная стоимость услуг мастеров зависит от класса авто (S / M / L).")
+    lines.append("Чтобы перейти к записи, нажмите кнопку «Записаться онлайн» ниже.")
+    return "\n".join(lines)
 
 
 def _consultation_followup_question(user_text: str, answer_text: str) -> str:
@@ -1230,13 +1373,14 @@ SYSTEM_PROMPT = r"""
 # ================== ГОТОВЫЙ ОТВЕТ ПО ПРЕИМУЩЕСТВАМ ==================
 ADVANTAGES_ANSWER = (
     "🏆 Преимущества BEARLAKE\n\n"
-    "🟦 Почему нас выбирают:\n"
-    "• Полный цикл услуг в одном месте: мойка, полировка, защита, салон, стекла\n"
-    "• Реальная экспертиза: премиальная химия OPT, NXTZEN, TAC System\n"
-    "• Два формата обслуживания: мастера и самообслуживание 24/7\n"
-    "• Комфорт клиента: зона отдыха, Wi-Fi, напитки и климат-контроль\n"
-    "• Прозрачный подход: понятный состав работ и ожидаемый результат ✅\n\n"
-    "Записаться можно по кнопке ниже ⬇️"
+    "Почему нас выбирают:\n"
+    "• Полный цикл услуг в одном месте: мойка, полировка, защита ЛКП, интерьер, стекла\n"
+    "• Реальная экспертиза мастеров и работа по проверенным технологиям детейлинга\n"
+    "• Премиальные материалы: OPT, NXTZEN, TAC System и профессиональный инструмент\n"
+    "• Два удобных формата обслуживания: услуги мастеров и самообслуживание 24/7\n"
+    "• Понятные этапы работ, ориентир по срокам и прозрачная коммуникация\n"
+    "• Комфорт во время ожидания: Wi‑Fi, зона отдыха, напитки, стабильный климат в помещении\n\n"
+    "Результат для Вас — аккуратный автомобиль, предсказуемый сервис и понятный следующий шаг к записи."
 )
 
 PRICES_ANSWER = (
@@ -1668,10 +1812,7 @@ def _button_from_link(label: str | None, url: str) -> InlineKeyboardButton:
     """Подбирает кнопку-иконку под известные ссылки."""
     low = url.lower()
     if "n1024167.yclients.com" in low:
-        return InlineKeyboardButton(
-            "📅 Записаться онлайн",
-            web_app=WebAppInfo(url="https://n1024167.yclients.com/"),
-        )
+        return InlineKeyboardButton("📅 Записаться онлайн", callback_data="booking_start")
     if "yandex.ru/maps" in low:
         return InlineKeyboardButton("📍 Яндекс Карты", url=url)
     if "t.me/bearlake_detailing" in low:
@@ -1728,6 +1869,8 @@ def _build_reply_markup(
     for row in rows:
         dedup_row: list[InlineKeyboardButton] = []
         for btn in row:
+            if getattr(btn, "callback_data", None) == "booking_done":
+                continue
             key = _button_key(btn)
             if key in seen:
                 continue
@@ -1794,7 +1937,7 @@ def _with_navigation_markup(
 
     nav_row: list[InlineKeyboardButton] = []
     if current_callback == "chat_text":
-        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data="menu_back_text"))
+        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data="menu_back_menu"))
     elif current_callback:
         back_target = BACK_TARGETS.get(current_callback)
         if back_target and not _has_callback_button(markup, back_target):
@@ -1856,14 +1999,10 @@ def _cleanup_outgoing_text(text: str) -> str:
                 continue
 
             # Нормализуем маркеры списка и добавляем тематические пиктограммы.
-            list_match = re.match(r"^\s*(?:•|\-|\d+\.)\s+(.*)$", line)
+            list_match = re.match(r"^\s*(?:•|·|▪|\-|\d+\.)\s+(.*)$", line)
             if list_match:
                 content = list_match.group(1).strip()
-                emoji = _emoji_for_service_line(content.lower())
-                if emoji:
-                    out.append(f"{emoji} {content}")
-                else:
-                    out.append(f"• {content}")
+                out.append(f"✅ {content}")
                 continue
 
             out.append(line)
@@ -1879,14 +2018,24 @@ def _cleanup_outgoing_text(text: str) -> str:
                 out.append(line)
                 continue
 
-            is_list_line = re.match(r"^\s*(?:•|\-|\d+\.)\s+", stripped) is not None
+            is_list_line = re.match(r"^\s*(?:•|·|▪|\-|\d+\.)\s+", stripped) is not None
             if not is_list_line and stripped.endswith(":") and len(stripped) <= 70:
-                out.append(f"🟦 {stripped}")
+                # Убираем старые разнотипные маркеры и приводим заголовки к единому виду.
+                heading = re.sub(r"^[^\wА-Яа-яA-Za-z0-9]+", "", stripped).strip()
+                out.append(f"✅ {heading}")
                 continue
             out.append(line)
         return "\n".join(out)
 
     cleaned = text.replace("**", "").replace("__", "")
+    # Нормализуем "канцелярский" тон ИИ в сторону прямого обращения к пользователю.
+    cleaned = re.sub(r"(?im)^клиент\s+(интересуется|уточнил|просит|хочет)\b.*$", "Понимаю Ваш запрос.", cleaned)
+    # Убираем служебную нумерацию вида 1) 2) 3), если модель её все же вернула.
+    cleaned = re.sub(r"(?m)^\s*\d+\)\s*", "• ", cleaned)
+    # Чистим строки вида "🟦 4) ..." до обычного списка.
+    cleaned = re.sub(r"(?m)^\s*[🟦🟪🟨🟥🟩🔹🔸▪▫◾◽]+\s*\d+\)\s*", "• ", cleaned)
+    # Убираем декоративные маркеры в начале строки (квадраты/ромбы и т.п.).
+    cleaned = re.sub(r"(?m)^\s*[🟦🟪🟨🟥🟩🔹🔸▪▫◾◽]+\s*", "", cleaned)
     cleaned = re.sub(r"(?m)^\s*#{1,6}\s*", "", cleaned)
     cleaned = re.sub(r"(?m)^\s*-\s+", "• ", cleaned)
     cleaned = re.sub(r"(?m)^\s*\.\s+", "• ", cleaned)
@@ -1909,12 +2058,16 @@ async def send_answer(
     force_booking: bool = False,
     user_lang: str = "ru",
     nav_context: str | None = None,
+    link_buttons: bool = True,
 ) -> None:
     """Отправляет ответ, автоматически добавляя кнопки записи при маркере."""
     clean_text, has_marker = extract_booking_marker(text)
     clean_text = _cleanup_outgoing_text(clean_text)
     clean_text = _with_sales_cta(clean_text)
-    clean_text, links = _extract_links(clean_text)
+    if link_buttons:
+        clean_text, links = _extract_links(clean_text)
+    else:
+        links = []
     show_booking = has_marker or force_booking
     if show_booking:
         clean_text += PHONE_LINE
@@ -2025,6 +2178,47 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.message.reply_text(text, reply_markup=GREETING_KEYBOARD)
         return
 
+    if query.data == "menu_back_menu":
+        log_button_click(user_id, query.data)
+        last_callback = context.chat_data.get("last_menu_callback")
+        if not last_callback:
+            await query.message.reply_text(
+                "Возвращаю в главное меню ⬇️",
+                reply_markup=GREETING_KEYBOARD,
+            )
+            return
+
+        target_callback = BACK_TARGETS.get(last_callback, last_callback)
+        if target_callback == "menu_shop":
+            await query.message.reply_text(
+                "Выберите раздел магазина по кнопкам ниже ⬇️",
+                reply_markup=SHOP_KEYBOARD,
+                disable_web_page_preview=True,
+            )
+            return
+
+        answer = STATIC_MENU_ANSWERS.get(target_callback)
+        sub_menu = SUB_MENUS.get(target_callback)
+
+        if answer:
+            clean_text, has_marker = extract_booking_marker(answer)
+            clean_text = _cleanup_outgoing_text(clean_text)
+            clean_text = _apply_cta_by_context(clean_text, target_callback)
+            clean_text, links = _extract_links(clean_text)
+            reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
+            reply_markup = _with_navigation_markup(reply_markup, target_callback)
+            await query.message.reply_text(
+                clean_text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+            )
+        else:
+            await query.message.reply_text(
+                "Возвращаю в главное меню ⬇️",
+                reply_markup=GREETING_KEYBOARD,
+            )
+        return
+
     if query.data == "menu_back_text":
         log_button_click(user_id, query.data)
         prev_step = _pop_previous_text_dialog_step(context)
@@ -2060,6 +2254,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if query.data == "booking_done":
+        log_button_click(user_id, query.data)
+        await query.message.reply_text(
+            "Подтверждение больше не требуется. Для записи используйте кнопку «Записаться онлайн» ✅",
+            reply_markup=BOOKING_OPEN_KEYBOARD,
+        )
+        return
+
+    if query.data == "booking_start":
+        log_button_click(user_id, query.data)
         if not context.chat_data.get("booking_logged"):
             service_topic = context.chat_data.get("last_topic", "не указано")
             amount_from = _estimate_booking_amount(service_topic)
@@ -2070,8 +2273,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _cancel_jobs(context.job_queue, f"followup_{query.message.chat_id}")
         _schedule_rating(context, query.message.chat_id)
         await query.message.reply_text(
-            "Отлично, спасибо! ✅\n"
-            "Через пару минут попрошу коротко оценить консультацию."
+            "Отлично! Фиксирую ваш переход к онлайн-записи ✅\n\n"
+            "Нажмите кнопку ниже, чтобы открыть форму в YClients.",
+            reply_markup=BOOKING_OPEN_KEYBOARD,
         )
         return
 
@@ -2097,6 +2301,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     _ensure_fresh_session(context, query.message.chat_id)
+    if query.data:
+        service_data = (
+            query.data.startswith("menu_")
+            or query.data.startswith("sub_")
+            or query.data in {"menu_prices", "menu_advantages"}
+        )
+        if service_data:
+            context.chat_data["last_menu_callback"] = query.data
 
     if query.data == "menu_advantages":
         log_button_click(user_id, query.data)
@@ -2132,7 +2344,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         append_to_history(context, "assistant", answer)
         await query.message.reply_text(
             answer,
-            reply_markup=_with_navigation_markup(SHOP_KEYBOARD, query.data),
+            reply_markup=SHOP_KEYBOARD,
             disable_web_page_preview=True,
         )
         chat_id = query.message.chat_id
@@ -2153,7 +2365,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         append_to_history(context, "assistant", answer)
         await query.message.reply_text(
             answer,
-            reply_markup=_with_navigation_markup(SHOP_KEYBOARD, query.data),
+            reply_markup=SHOP_KEYBOARD,
             disable_web_page_preview=True,
         )
         chat_id = query.message.chat_id
@@ -2163,7 +2375,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_text = MENU_PROMPTS.get(query.data)
     if not user_text:
-        return
+        # Fail-safe: кнопка не должна "молчать", даже если забыли добавить prompt.
+        if query.data in STATIC_MENU_ANSWERS:
+            topic = TOPIC_LABELS.get(query.data, "услугу")
+            user_text = f"Расскажите подробнее про {topic}."
+        else:
+            return
 
     chat_id = query.message.chat_id
 
@@ -2236,7 +2453,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 disable_web_page_preview=True,
             )
         else:
-            await send_answer(query.message, answer, nav_context=query.data)
+            use_link_buttons = query.data != "menu_portfolio"
+            await send_answer(
+                query.message,
+                answer,
+                nav_context=query.data,
+                link_buttons=use_link_buttons,
+            )
 
     topic = TOPIC_LABELS.get(query.data, "нашими услугами")
     context.chat_data["last_topic"] = topic
@@ -2391,6 +2614,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     history = get_history(context)
     append_to_history(context, "user", user_text)
+    constrained_answer = _budget_time_recommendation(user_text)
+    if constrained_answer:
+        append_to_history(context, "assistant", constrained_answer)
+        await send_answer(
+            update.message,
+            constrained_answer,
+            user_lang=user_lang,
+            nav_context="chat_text",
+        )
+        _push_text_dialog_step(context, constrained_answer)
+        context.chat_data["last_topic"] = "подбором услуг по бюджету и сроку"
+        _schedule_followup(context, chat_id, user_id, "подбором услуг по бюджету и сроку")
+        return
+
     gpt_query = _build_consultation_query(user_text) if is_complex else user_text
     answer = await get_gpt_response(gpt_query, history)
     if is_complex:
