@@ -724,12 +724,26 @@ def _detect_priority_intent(text_lower: str) -> str | None:
 
 def _is_short_followup_request(user_text: str) -> bool:
     text = user_text.strip().lower()
-    if len(text) > 24:
+    if len(text) > 35:
         return False
     triggers = {
+        # Исходные
         "подскажи", "подскажите", "давай", "ок", "хорошо", "понятно",
         "сориентируй", "сориентируйте", "ориентируй", "ориентируйте",
         "что лучше", "что посоветуешь", "и что", "и как",
+        # Глаголы подбора/рекомендации
+        "подберите", "подбери", "посоветуйте", "посоветуй",
+        "порекомендуйте", "порекомендуй", "рекомендуйте",
+        # Нарративные продолжения
+        "расскажите", "расскажи", "покажите", "покажи",
+        "объясните", "объясни", "поясните", "поясни",
+        "помогите", "помоги", "помогите выбрать", "помоги выбрать",
+        # Запрос продолжения
+        "дальше", "продолжи", "продолжите", "и что дальше",
+        "интересно", "интересует", "хочу узнать", "хочу знать",
+        # Согласие/подтверждение
+        "да", "угу", "ясно", "понял", "понятно", "ладно",
+        "хочу", "надо", "нужно", "нужна", "нужен",
     }
     return text in triggers
 
@@ -1113,6 +1127,12 @@ ON_TOPIC_HINTS = (
     "адрес", "график", "запис", "yclients", "ozon", "магазин", "скидк", "акци",
     "чат", "помог", "консультац", "сориентир", "ориентир",
     "bearlake",
+    # Консультационные запросы — всегда передаём в GPT, не отбрасываем
+    "подбер", "посовет", "порекомен", "рекомен",
+    "расскаж", "объясн", "поясн", "покаж",
+    "выбрать", "выбери", "выберит",
+    "подход", "подойд", "лучше всего",
+    "авто", "машин", "автомобил",
 )
 
 
@@ -2576,7 +2596,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Главное меню ⬇️", reply_markup=GREETING_KEYBOARD)
         return
 
-    if _is_short_followup_request(user_text):
+    # Флаг: короткий контекстный запрос — off-topic фильтр пропускаем, идём в GPT
+    _short_followup = _is_short_followup_request(user_text)
+    if _short_followup:
         last_topic = context.chat_data.get("last_topic", "")
         contextual = _context_followup_answer(last_topic)
         if contextual:
@@ -2592,6 +2614,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             _push_text_dialog_step(context, contextual)
             _schedule_followup(context, chat_id, user_id, last_topic or "нашими услугами")
             return
+        # Нет шаблонного ответа — продолжаем, минуя off-topic фильтр (GPT разберётся по истории)
 
     if context.chat_data.get("awaiting_consultation_priority"):
         priority = _detect_consultation_priority(user_text)
@@ -2632,7 +2655,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     kb_answer_early, kb_score_early, kb_question_early = _find_kb_answer(user_text)
 
-    if not _is_on_topic(user_text) and not kb_answer_early:
+    if not _short_followup and not _is_on_topic(user_text) and not kb_answer_early:
         answer = (
             "Вопрос не по теме детейлинга. "
             "Давайте вернёмся к услугам студии: мойка, полировка, защита, "
