@@ -180,7 +180,6 @@ SHOP_KEYBOARD = InlineKeyboardMarkup([
         InlineKeyboardButton("🏪 Сайт студии", url="https://bearlake.clients.site/"),
     ],
     [
-        InlineKeyboardButton("⬅️ Назад", callback_data="menu_main"),
         InlineKeyboardButton("🏠 Главное меню", callback_data="menu_main"),
     ],
 ])
@@ -189,6 +188,7 @@ COMFORT_KEYBOARD = InlineKeyboardMarkup([])
 
 SUB_MENUS = {
     "menu_services": SERVICES_KEYBOARD,
+    "menu_self": SELF_KEYBOARD,
     "menu_shop": SHOP_KEYBOARD,
     "sub_wash": WASH_KEYBOARD,
 }
@@ -1744,8 +1744,8 @@ def _estimate_booking_amount(service_topic: str) -> int:
     pricing_rules = [
         (("быстр", "двухфаз"), 3000),
         (("комплексн", "мойк"), 8000),
-        (("деконтам"), 6000),
-        (("подкапот"), 9000),
+        (("деконтам",), 6000),
+        (("подкапот",), 9000),
         (("полиров",), 25000),
         (("керамич",), 5000),
         (("интерьер", "салон", "химчист"), 28000),
@@ -1949,6 +1949,10 @@ BACK_TARGETS: dict[str, str] = {
     "sub_glass": "menu_services",
     "sub_chips": "menu_services",
     "sub_all_prices": "menu_services",
+    "sub_self_equip": "menu_self",
+    "sub_self_price": "menu_self",
+    "sub_self_included": "menu_self",
+    "sub_self_rules": "menu_self",
     "sub_shop_recommend": "menu_shop",
     "sub_shop_ozon": "menu_shop",
     "sub_shop_discounts": "menu_shop",
@@ -1983,7 +1987,7 @@ def _with_navigation_markup(
 
     nav_row: list[InlineKeyboardButton] = []
     if current_callback == "chat_text":
-        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data="menu_back_menu"))
+        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data="menu_back_text"))
     elif current_callback:
         back_target = BACK_TARGETS.get(current_callback)
         if back_target and not _has_callback_button(markup, back_target):
@@ -2109,7 +2113,8 @@ async def send_answer(
     """Отправляет ответ, автоматически добавляя кнопки записи при маркере."""
     clean_text, has_marker = extract_booking_marker(text)
     clean_text = _cleanup_outgoing_text(clean_text)
-    clean_text = _with_sales_cta(clean_text)
+    if nav_context not in NO_CTA_CALLBACKS:
+        clean_text = _with_sales_cta(clean_text)
     if link_buttons:
         clean_text, links = _extract_links(clean_text)
     else:
@@ -2193,9 +2198,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         pass
 
     user_id = update.effective_user.id if update.effective_user else "unknown"
-    if query.data == "menu_back_text":
-        query.data = "menu_back_menu"
-
     if query.data and (query.data.startswith("detail::") or query.data.startswith("detail_skip::")):
         text = "Эти старые кнопки отключены. Выберите, пожалуйста, конкретную услугу в актуальном меню ⬇️"
         await query.message.reply_text(text, reply_markup=GREETING_KEYBOARD)
@@ -2206,6 +2208,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.chat_data["consent"] = True
         context.chat_data["greeted"] = True
         context.chat_data["history"] = []
+        context.chat_data["rated"] = False
         context.chat_data["booking_confirmed"] = False
         context.chat_data["booking_logged"] = False
         context.chat_data["awaiting_consultation_priority"] = False
@@ -2418,9 +2421,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             answer = _apply_cta_by_context(SHOP_DISCOUNTS_ANSWER, query.data)
         append_to_history(context, "assistant", answer)
+        shop_nav_markup = _with_navigation_markup(SHOP_KEYBOARD, query.data)
         await query.message.reply_text(
             answer,
-            reply_markup=SHOP_KEYBOARD,
+            reply_markup=shop_nav_markup,
             disable_web_page_preview=True,
         )
         chat_id = query.message.chat_id
@@ -2688,6 +2692,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif intent:
         _log_kb_match(user_id, user_text, None, 0.0, "fallback_intent")
 
+    # ── Статические ответы для высокоприоритетных текстовых интентов (без GPT) ──
+    if intent and intent in (STRICT_TEXT_INTENTS - {"direct_booking"}) and not is_complex:
+        _s_ans: str | None = None
+        _s_force = False
+        _s_markup = None
+
+        if intent == "menu_advantages":
+            _s_ans = ADVANTAGES_ANSWER
+            _s_force = True
+        elif intent in {"menu_prices", "sub_all_prices"}:
+            _s_ans = PRICES_ANSWER
+            _s_force = True
+        elif intent == "menu_address":
+            _s_ans = STATIC_MENU_ANSWERS.get("menu_address", "")
+        elif intent == "menu_shop":
+            _s_ans = "Выберите раздел магазина по кнопкам ниже ⬇️"
+            _s_markup = _with_navigation_markup(SHOP_KEYBOARD, intent)
+        elif intent == "sub_shop_recommend":
+            _s_ans = _apply_cta_by_context(SHOP_RECOMMEND_ANSWER, intent)
+            _s_markup = _with_navigation_markup(SHOP_KEYBOARD, intent)
+        elif intent == "sub_shop_ozon":
+            _s_ans = _apply_cta_by_context(SHOP_OZON_ANSWER, intent)
+            _s_markup = _with_navigation_markup(SHOP_KEYBOARD, intent)
+        elif intent == "sub_shop_discounts":
+            _s_ans = _apply_cta_by_context(SHOP_DISCOUNTS_ANSWER, intent)
+            _s_markup = _with_navigation_markup(SHOP_KEYBOARD, intent)
+
+        if _s_ans:
+            append_to_history(context, "user", user_text)
+            append_to_history(context, "assistant", _s_ans)
+            if _s_markup:
+                _s_text = await _finalize_response_text(_s_ans, user_lang)
+                await update.message.reply_text(
+                    _s_text, reply_markup=_s_markup, disable_web_page_preview=True
+                )
+            else:
+                await send_answer(
+                    update.message, _s_ans,
+                    force_booking=_s_force,
+                    user_lang=user_lang,
+                    nav_context=intent,
+                )
+            _push_text_dialog_step(context, _s_ans)
+            _s_topic = TOPIC_LABELS.get(intent, "нашими услугами")
+            context.chat_data["last_topic"] = _s_topic
+            _schedule_followup(context, chat_id, user_id, _s_topic)
+            return
+    # ─────────────────────────────────────────────────────────────────────────────
+
     history = get_history(context)
     append_to_history(context, "user", user_text)
     constrained_answer = _budget_time_recommendation(user_text)
@@ -2722,86 +2775,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     _push_text_dialog_step(context, answer)
     context.chat_data["last_topic"] = "вопросом по услугам"
     _schedule_followup(context, chat_id, user_id, "вопросом по услугам")
-    return
 
-    if not intent:
-        if candidates:
-            candidate_labels = [
-                f"• {INTENT_CLARIFY_LABELS.get(candidate, candidate)}"
-                for candidate in candidates[:4]
-            ]
-            answer = (
-                "Хочу ответить точно, но запрос сейчас двусмысленный.\n"
-                "Уточните, пожалуйста, что именно интересует:\n"
-                f"{chr(10).join(candidate_labels)}"
-            )
-        else:
-            answer = (
-                "Чтобы ответить максимально точно, выберите нужный раздел в меню ниже ⬇️\n\n"
-                "Или напишите короче, например: «цены», «мойка», «полировка», "
-                "«самообслуживание», «адрес», «скидки»."
-            )
-        answer = _with_sales_cta(answer)
-        answer = await _finalize_response_text(answer, user_lang)
-        append_to_history(context, "user", user_text)
-        append_to_history(context, "assistant", answer)
-        await update.message.reply_text(answer, reply_markup=GREETING_KEYBOARD)
-        _schedule_followup(context, chat_id, user_id, "нашими услугами")
-        return
-
-    append_to_history(context, "user", user_text)
-
-    if intent == "menu_advantages":
-        answer = ADVANTAGES_ANSWER
-        append_to_history(context, "assistant", answer)
-        await send_answer(update.message, answer, force_booking=True, user_lang=user_lang)
-    elif intent in {"menu_prices", "sub_all_prices"}:
-        answer = PRICES_ANSWER
-        append_to_history(context, "assistant", answer)
-        await send_answer(update.message, answer, force_booking=True, user_lang=user_lang)
-    elif intent == "menu_shop":
-        answer = _with_sales_cta("Выберите раздел магазина по кнопкам ниже ⬇️")
-        answer = await _finalize_response_text(answer, user_lang)
-        append_to_history(context, "assistant", answer)
-        await update.message.reply_text(answer, reply_markup=SHOP_KEYBOARD)
-    elif intent in {"sub_shop_recommend", "sub_shop_ozon", "sub_shop_discounts"}:
-        if intent == "sub_shop_recommend":
-            answer = _with_sales_cta(SHOP_RECOMMEND_ANSWER)
-        elif intent == "sub_shop_ozon":
-            answer = _with_sales_cta(SHOP_OZON_ANSWER)
-        else:
-            answer = _with_sales_cta(SHOP_DISCOUNTS_ANSWER)
-        answer = await _finalize_response_text(answer, user_lang)
-        append_to_history(context, "assistant", answer)
-        await update.message.reply_text(answer, reply_markup=SHOP_KEYBOARD, disable_web_page_preview=True)
-    else:
-        answer = STATIC_MENU_ANSWERS.get(intent)
-        if not answer:
-            answer = _with_sales_cta("Выберите, пожалуйста, нужный раздел в меню ниже ⬇️")
-            answer = await _finalize_response_text(answer, user_lang)
-            append_to_history(context, "assistant", answer)
-            await update.message.reply_text(answer, reply_markup=GREETING_KEYBOARD)
-        else:
-            append_to_history(context, "assistant", answer)
-            sub_menu = SUB_MENUS.get(intent)
-            if sub_menu:
-                clean_text, has_marker = extract_booking_marker(answer)
-                clean_text = _cleanup_outgoing_text(clean_text)
-                clean_text = _with_sales_cta(clean_text)
-                clean_text, links = _extract_links(clean_text)
-                clean_text = await _finalize_response_text(clean_text, user_lang)
-                reply_markup = _build_reply_markup(has_marker, links, base_markup=sub_menu)
-                await update.message.reply_text(
-                    clean_text,
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True,
-                )
-            else:
-                await send_answer(update.message, answer, user_lang=user_lang)
-
-    topic = TOPIC_LABELS.get(intent, "нашими услугами")
-    context.chat_data["last_topic"] = topic
-    _schedule_followup(context, chat_id, user_id, topic)
 
 # ================== КОМАНДЫ ПД ==================
 async def privacy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
