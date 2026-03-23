@@ -23,6 +23,32 @@ PRICE_OUTPUT = 0.60 / 1_000_000
 
 USD_RUB_RATE = float(os.getenv("USD_RUB_RATE", "90"))
 
+# Прогнозные диапазоны цен (мин=S-класс, средн=M-класс, макс=L-класс / максимальный пакет)
+# Источник: прайс-лист студии + типичные коэффициенты S/M/L
+SERVICE_PRICE_RANGES: list[tuple[tuple[str, ...], int, int, int]] = [
+    (("быстр", "двухфаз"),               3_000,   4_200,   5_500),
+    (("комплексн", "мойк"),              8_000,  11_500,  15_000),
+    (("деконтам",),                      6_000,   8_500,  12_000),
+    (("подкапот",),                      9_000,  12_000,  16_000),
+    (("полиров",),                      25_000,  36_000,  55_000),
+    (("керамич",),                       5_000,  14_000,  28_000),
+    (("интерьер", "салон", "химчист"),  28_000,  40_000,  58_000),
+    (("пленк", "ppf", "брон"),          30_000,  58_000,  90_000),
+    (("скол", "трещин"),                 3_500,   5_500,   8_000),
+    (("самообслуж",),                      700,   1_600,   2_800),
+]
+_DEFAULT_PRICE_RANGE = (3_000, 7_000, 15_000)
+
+
+def estimate_price_range(service_topic: str) -> tuple[int, int, int]:
+    """Возвращает (мин, средний, макс) прогноз цены по теме услуги."""
+    topic = (service_topic or "").lower()
+    for keywords, p_min, p_avg, p_max in SERVICE_PRICE_RANGES:
+        if any(kw in topic for kw in keywords):
+            return p_min, p_avg, p_max
+    return _DEFAULT_PRICE_RANGE
+
+
 plt.rcParams.update({
     "figure.facecolor": "white",
     "axes.facecolor": "#f8f9fa",
@@ -72,12 +98,19 @@ def log_button_click(user_id: int, button_data: str, timestamp: str = None):
     _append_csv("buttons.csv", ["user_id", "button", "timestamp"], [user_id, button_data, ts])
 
 
-def log_booking(user_id: int, service: str, amount_from: int, timestamp: str = None):
+def log_booking(
+    user_id: int,
+    service: str,
+    amount_from: int,
+    amount_avg: int = 0,
+    amount_max: int = 0,
+    timestamp: str = None,
+):
     ts = timestamp or datetime.now().isoformat()
     _append_csv(
         "bookings.csv",
-        ["user_id", "service", "amount_from", "timestamp"],
-        [user_id, service, amount_from, ts],
+        ["user_id", "service", "amount_from", "amount_avg", "amount_max", "timestamp"],
+        [user_id, service, amount_from, amount_avg, amount_max, ts],
     )
 
 
@@ -191,6 +224,41 @@ def _chart_top_buttons(buttons_df: pd.DataFrame) -> bytes:
     return _fig_to_bytes(fig)
 
 
+def _chart_bookings_by_service(bookings_df: pd.DataFrame) -> bytes:
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    if not bookings_df.empty:
+        svc = (
+            bookings_df.groupby("service")
+            .agg(count=("service", "count"), avg=("amount_from", "mean"))
+            .sort_values("count", ascending=False)
+            .head(8)
+        )
+        labels = [s[:30] + "…" if len(s) > 30 else s for s in svc.index]
+
+        # Левый: количество записей
+        colors_l = plt.cm.Set2(range(len(svc)))
+        axes[0].barh(labels[::-1], svc["count"].values[::-1], color=colors_l)
+        for i, v in enumerate(svc["count"].values[::-1]):
+            axes[0].text(v + 0.1, i, str(v), va="center", fontsize=10)
+        axes[0].set_title("Записей по услугам")
+        axes[0].set_xlabel("Количество")
+
+        # Правый: средний чек
+        colors_r = plt.cm.Set3(range(len(svc)))
+        axes[1].barh(labels[::-1], svc["avg"].values[::-1].astype(int), color=colors_r)
+        for i, v in enumerate(svc["avg"].values[::-1].astype(int)):
+            axes[1].text(v + 100, i, f"{v:,} ₽", va="center", fontsize=10)
+        axes[1].set_title("Средний чек по услугам (₽)")
+        axes[1].set_xlabel("Рублей")
+    else:
+        for ax in axes:
+            ax.text(0.5, 0.5, "Нет данных", ha="center", va="center", transform=ax.transAxes)
+
+    fig.tight_layout()
+    return _fig_to_bytes(fig)
+
+
 def _chart_top_questions(questions_df: pd.DataFrame) -> bytes:
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -256,6 +324,18 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
     active_days = questions_df["timestamp"].dt.date.nunique() if not questions_df.empty else 0
     avg_msgs_per_day = round(total_messages / max(active_days, 1), 1)
 
+    # Предварительный прогноз выручки по диапазонам цен (до сборки сводки)
+    # Каждая запись → (мин, средн, макс) из таблицы, суммируем построчно
+    if not bookings_df.empty:
+        _ranges = bookings_df["service"].apply(estimate_price_range)
+        revenue_avg_forecast = int(_ranges.apply(lambda t: t[1]).sum())
+        revenue_max_forecast = int(_ranges.apply(lambda t: t[2]).sum())
+    else:
+        revenue_avg_forecast = 0
+        revenue_max_forecast = 0
+
+    romi_avg = round(revenue_avg_forecast / cost_rub, 1) if cost_rub > 0 else None
+
     # --- Сводка ---
     summary = pd.DataFrame([{
         "Период": f"{start.strftime('%d.%m.%Y')} — {end.strftime('%d.%m.%Y')}",
@@ -268,8 +348,11 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
         "Подтвержденных записей через бота": total_bookings,
         "Клиентов с записью": booked_users,
         "Конверсия в запись": f"{conversion_to_booking}%",
-        "Оценочная выручка (минимум)": f"{revenue_from_bookings} ₽",
-        "ROMI-like (выручка min / расходы OpenAI)": f"x{romi_like}" if romi_like is not None else "—",
+        "Выручка: факт min (₽)": f"{revenue_from_bookings:,} ₽",
+        "Выручка: прогноз средн (₽)": f"{revenue_avg_forecast:,} ₽",
+        "Выручка: прогноз макс (₽)": f"{revenue_max_forecast:,} ₽",
+        "ROMI-like (факт min / OpenAI)": f"x{romi_like}" if romi_like is not None else "—",
+        "ROMI-like (прогноз средн / OpenAI)": f"x{romi_avg}" if romi_avg is not None else "—",
         "Сообщений / пользователь": avg_msgs_per_user,
         "Сообщений / день": avg_msgs_per_day,
         "Средняя оценка": avg_rating,
@@ -323,12 +406,36 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
     else:
         top_b = pd.DataFrame(columns=["Кнопка", "Нажатий"])
 
-    # --- Топ услуг по бронированиям ---
+    # --- Топ услуг по бронированиям с прогнозом чека ---
     if not bookings_df.empty:
-        top_services = bookings_df["service"].value_counts().reset_index()
-        top_services.columns = ["Услуга (тема)", "Записей"]
+        svc_grp = (
+            bookings_df.groupby("service")
+            .agg(cnt=("service", "count"), revenue_min=("amount_from", "sum"))
+            .reset_index()
+            .sort_values("cnt", ascending=False)
+        )
+        # Прогноз диапазона чеков из таблицы SERVICE_PRICE_RANGES
+        prognosis = svc_grp["service"].apply(estimate_price_range)
+        svc_grp["Прогноз: мин (₽)"]    = prognosis.apply(lambda t: t[0])
+        svc_grp["Прогноз: средн (₽)"]  = prognosis.apply(lambda t: t[1])
+        svc_grp["Прогноз: макс (₽)"]   = prognosis.apply(lambda t: t[2])
+        svc_grp["Прогноз: выручка средн (₽)"] = svc_grp["cnt"] * svc_grp["Прогноз: средн (₽)"]
+        svc_grp["Прогноз: выручка макс (₽)"]  = svc_grp["cnt"] * svc_grp["Прогноз: макс (₽)"]
+        top_services = svc_grp.rename(columns={
+            "service": "Услуга (тема)",
+            "cnt": "Записей",
+            "revenue_min": "Факт. выручка min (₽)",
+        })
     else:
-        top_services = pd.DataFrame(columns=["Услуга (тема)", "Записей"])
+        top_services = pd.DataFrame(columns=[
+            "Услуга (тема)", "Записей", "Факт. выручка min (₽)",
+            "Прогноз: мин (₽)", "Прогноз: средн (₽)", "Прогноз: макс (₽)",
+            "Прогноз: выручка средн (₽)", "Прогноз: выручка макс (₽)",
+        ])
+
+    # Прогноз совокупной выручки за период
+    revenue_avg_forecast = int(top_services["Прогноз: выручка средн (₽)"].sum()) if not top_services.empty else 0
+    revenue_max_forecast = int(top_services["Прогноз: выручка макс (₽)"].sum()) if not top_services.empty else 0
 
     # --- Пользователи ---
     user_rows = []
@@ -352,6 +459,7 @@ def generate_monthly_report(year: int = None, month: int = None) -> str:
     # --- Графики ---
     charts = {}
     charts["users"] = _chart_daily_users(questions_df, clients_df, start, end)
+    charts["bookings"] = _chart_bookings_by_service(bookings_df)
     charts["cost"] = _chart_daily_cost(tokens_df)
     charts["tokens"] = _chart_daily_tokens(tokens_df)
     charts["buttons"] = _chart_top_buttons(buttons_df)
@@ -428,6 +536,38 @@ def generate_text_summary(year: int = None, month: int = None) -> str:
     cost_rub = round(calc_cost_rub(p_tok, c_tok), 2)
     romi_like = round(revenue_from_bookings / cost_rub, 1) if cost_rub > 0 else None
 
+    # Топ услуг по записям
+    services_block = ""
+    if not bookings_df.empty:
+        svc_stats = (
+            bookings_df.groupby("service")
+            .agg(cnt=("service", "count"), avg=("amount_from", "mean"))
+            .sort_values("cnt", ascending=False)
+            .head(5)
+        )
+        # Прогноз выручки по диапазонам
+        _txt_ranges = bookings_df["service"].apply(estimate_price_range)
+        _txt_avg_fc = int(_txt_ranges.apply(lambda t: t[1]).sum())
+        _txt_max_fc = int(_txt_ranges.apply(lambda t: t[2]).sum())
+
+        lines = []
+        for svc, row in svc_stats.iterrows():
+            label = (svc[:26] + "…") if len(svc) > 26 else svc
+            p_min, p_avg, p_max = estimate_price_range(svc)
+            lines.append(
+                f"   • {label}: {int(row['cnt'])} зап.\n"
+                f"     чек {p_min:,}–{p_avg:,}–{p_max:,} ₽ (мин/средн/макс)"
+            )
+        services_block = (
+            "🏷 Топ услуг по записям:\n" + "\n".join(lines) + "\n"
+            f"💹 Прогноз выручки: {_txt_avg_fc:,}–{_txt_max_fc:,} ₽\n"
+        )
+    else:
+        _txt_avg_fc = 0
+        _txt_max_fc = 0
+
+    romi_avg = round(_txt_avg_fc / cost_rub, 1) if cost_rub > 0 else None
+
     return (
         f"📊 Отчёт за {start.strftime('%B %Y')}\n"
         f"{'─' * 28}\n"
@@ -435,11 +575,15 @@ def generate_text_summary(year: int = None, month: int = None) -> str:
         f"🆕 Новых клиентов: {total_new}\n"
         f"💬 Сообщений: {total_msgs}\n"
         f"🔘 Нажатий на кнопки: {total_clicks}\n"
+        f"{'─' * 28}\n"
         f"📅 Записей через бота: {total_bookings}\n"
         f"🙋 Клиентов с записью: {booked_users}\n"
         f"📈 Конверсия в запись: {conversion_to_booking}%\n"
-        f"💵 Выручка min по записям: {revenue_from_bookings} ₽\n"
-        f"📊 ROMI-like: {'x' + str(romi_like) if romi_like is not None else '—'}\n"
+        f"💵 Выручка min: {revenue_from_bookings:,} ₽  "
+        f"| прогноз: {_txt_avg_fc:,}–{_txt_max_fc:,} ₽\n"
+        f"📊 ROMI-like: факт {'x' + str(romi_like) if romi_like is not None else '—'}"
+        f"  | прогноз {'x' + str(romi_avg) if romi_avg is not None else '—'}\n"
+        f"{services_block}"
         f"{'─' * 28}\n"
         f"🔤 Токенов: {p_tok + c_tok:,}\n"
         f"   ├ prompt: {p_tok:,}\n"
