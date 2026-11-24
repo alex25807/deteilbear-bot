@@ -7,6 +7,7 @@ import re
 import difflib
 import csv
 import unicodedata
+import tempfile
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import pathlib
@@ -14,6 +15,7 @@ import pathlib
 load_dotenv()
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -45,6 +47,10 @@ OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "30"))
 RATING_DELAY = int(os.getenv("RATING_DELAY", "300"))
 FOLLOWUP_DELAY = int(os.getenv("FOLLOWUP_DELAY", "86400"))
 CACHE_TTL = int(os.getenv("CACHE_TTL", "21600"))
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-1")
+MAX_VOICE_DURATION = int(os.getenv("MAX_VOICE_DURATION", "60"))
+OPENAI_STT_TIMEOUT = int(os.getenv("OPENAI_STT_TIMEOUT", OPENAI_TIMEOUT))
+WHISPER_MAX_BYTES = 25 * 1024 * 1024
 
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не установлен в .env")
@@ -219,6 +225,7 @@ PRIVACY_TEXT = (
     "📋 Обрабатываемые данные:\n"
     "• Telegram ID (технический идентификатор)\n"
     "• Текст сообщений в чате с ботом\n"
+    "• Голосовые сообщения и видеокружки — только для распознавания речи\n"
     "• Дата и время обращений\n"
     "• Нажатия на кнопки меню\n\n"
     "🎯 Цели обработки:\n"
@@ -228,7 +235,9 @@ PRIVACY_TEXT = (
     "🛡 Защита данных:\n"
     "• Данные хранятся на защищённом сервере\n"
     "• Доступ имеют только уполномоченные сотрудники\n"
-    "• Данные не передаются третьим лицам\n\n"
+    "• Аудиофайлы не сохраняются: они передаются в OpenAI только для расшифровки и сразу удаляются\n"
+    "• Текст расшифровки хранится как обычные сообщения в чате\n"
+    "• Для генерации ответов текст запроса обрабатывается сервисом OpenAI\n\n"
     "⏱ Срок хранения:\n"
     "До момента удаления вами через /deletedata\n\n"
     "Ваши права (ст. 14–17 ФЗ-152):\n"
@@ -237,6 +246,23 @@ PRIVACY_TEXT = (
     "• Отозвать согласие — /deletedata\n\n"
     "📩 Контакт по вопросам ПД:\n"
     "+7 (926) 021-60-00"
+)
+
+VOICE_TOO_LONG_TEXT = (
+    f"Голосовое слишком длинное. Отправьте сообщение до {MAX_VOICE_DURATION} секунд "
+    "или напишите вопрос текстом."
+)
+VOICE_TOO_LARGE_TEXT = (
+    "Файл слишком большой для распознавания. "
+    "Отправьте более короткое голосовое или напишите вопрос текстом."
+)
+VOICE_EMPTY_TEXT = (
+    "Не удалось разобрать речь. "
+    "Попробуйте ещё раз ближе к микрофону или напишите вопрос текстом."
+)
+VOICE_FAILED_TEXT = (
+    "Сейчас не получилось распознать голос. "
+    "Попробуйте ещё раз или напишите вопрос текстом."
 )
 
 TOPIC_LABELS = {
@@ -1813,8 +1839,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "BEARLAKE DETAILING & SHOP 🐻\n\n"
             "Помогу подобрать услугу, расскажу о ценах "
             "и условиях, а также запишу на удобное время.\n\n"
-            "Выберите интересующий раздел ⬇️ "
-            "или просто напишите свой вопрос!"
+            "Выберите интересующий раздел ⬇️, "
+            "напишите вопрос или отправьте голосовое 🎤"
         )
         append_to_history(context, "assistant", greeting)
         await update.message.reply_text(greeting, reply_markup=GREETING_KEYBOARD)
@@ -1826,6 +1852,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Для работы бота мы обрабатываем:\n"
             "• Ваш Telegram ID\n"
             "• Текст сообщений в чате\n"
+            "• Голосовые сообщения (для распознавания речи, аудио не хранится)\n"
             "• Дату и время обращений\n\n"
             "Данные используются исключительно для "
             "консультирования по услугам студии.\n\n"
@@ -2240,8 +2267,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "Спасибо! Согласие принято ✅\n\n"
             "Помогу подобрать услугу, расскажу о ценах "
             "и условиях, а также запишу на удобное время.\n\n"
-            "Выберите интересующий раздел ⬇️ "
-            "или просто напишите свой вопрос!"
+            "Выберите интересующий раздел ⬇️, "
+            "напишите вопрос или отправьте голосовое 🎤"
         )
         append_to_history(context, "assistant", greeting)
         await query.message.reply_text(greeting, reply_markup=GREETING_KEYBOARD)
@@ -2251,7 +2278,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         log_button_click(user_id, query.data)
         context.chat_data["awaiting_consultation_priority"] = False
         _clear_text_dialog_steps(context)
-        text = "Главное меню ⬇️ Выберите раздел или задайте вопрос в чате."
+        text = "Главное меню ⬇️ Выберите раздел, напишите вопрос или отправьте голосовое 🎤"
         append_to_history(context, "assistant", text)
         await query.message.reply_text(text, reply_markup=GREETING_KEYBOARD)
         return
@@ -2548,8 +2575,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.message.text is None:
         return
+    await _process_user_text(update, context, update.message.text)
 
-    user_text = update.message.text.strip()
+
+async def _process_user_text(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str
+) -> None:
+    if update.message is None:
+        return
+
+    user_text = user_text.strip()
+    if not user_text:
+        return
+
     user_lang = _detect_user_language(user_text)
     context.chat_data["last_user_lang"] = user_lang
     chat_id = update.effective_chat.id
@@ -2566,7 +2604,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.chat_data["greeted"] = True
         greeting = (
             "С возвращением! 👋\n\n"
-            "Выберите раздел или задайте вопрос ⬇️"
+            "Выберите раздел, напишите вопрос или отправьте голосовое 🎤"
         )
         greeting = await _finalize_response_text(greeting, user_lang)
         await update.message.reply_text(greeting, reply_markup=GREETING_KEYBOARD)
@@ -2800,6 +2838,129 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     _schedule_followup(context, chat_id, user_id, "вопросом по услугам")
 
 
+# ================== ГОЛОСОВЫЕ СООБЩЕНИЯ ==================
+def _safe_unlink(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        logger.warning("Не удалось удалить временный аудиофайл %s", path)
+
+
+def _resolve_voice_media(message) -> tuple[str, int, int, str, str] | None:
+    """Возвращает (file_id, duration, file_size, suffix, kind) для голосового ввода."""
+    if message.voice:
+        voice = message.voice
+        return voice.file_id, voice.duration or 0, voice.file_size or 0, ".ogg", "voice"
+    if message.video_note:
+        note = message.video_note
+        return note.file_id, note.duration or 0, note.file_size or 0, ".mp4", "video_note"
+    if message.audio:
+        audio = message.audio
+        ext = os.path.splitext(audio.file_name or "")[1].lower()
+        if ext not in {".mp3", ".m4a", ".ogg", ".wav", ".flac", ".webm", ".mp4", ".mpeg", ".mpga"}:
+            ext = ".mp3"
+        return audio.file_id, audio.duration or 0, audio.file_size or 0, ext, "audio"
+    return None
+
+
+def _format_transcript_preview(transcript: str, limit: int = 400) -> str:
+    text = transcript.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+async def _download_media_to_temp(file_id: str, suffix: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+    tg_file = await context.bot.get_file(file_id)
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    try:
+        await tg_file.download_to_drive(path)
+        return path
+    except Exception:
+        _safe_unlink(path)
+        raise
+
+
+async def _transcribe_audio(path: str) -> str:
+    with open(path, "rb") as audio_file:
+        result = await asyncio.wait_for(
+            client.audio.transcriptions.create(
+                model=WHISPER_MODEL,
+                file=audio_file,
+                language="ru",
+                timeout=OPENAI_STT_TIMEOUT,
+            ),
+            timeout=OPENAI_STT_TIMEOUT,
+        )
+    return (getattr(result, "text", None) or "").strip()
+
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Принимает голосовые, кружки и аудио, распознаёт речь и передаёт в текстовый пайплайн."""
+    if update.message is None:
+        return
+
+    user_id = update.effective_user.id if update.effective_user else "unknown"
+    user_lang = context.chat_data.get("last_user_lang") or "ru"
+
+    if not _check_consent(context, user_id):
+        consent_text = await _finalize_response_text(NO_CONSENT_TEXT, user_lang)
+        await update.message.reply_text(consent_text)
+        return
+
+    media = _resolve_voice_media(update.message)
+    if media is None:
+        return
+    file_id, duration, file_size, suffix, kind = media
+
+    if duration > MAX_VOICE_DURATION:
+        await update.message.reply_text(VOICE_TOO_LONG_TEXT)
+        return
+    if file_size and file_size > WHISPER_MAX_BYTES:
+        await update.message.reply_text(VOICE_TOO_LARGE_TEXT)
+        return
+
+    chat_id = update.effective_chat.id
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    status = await update.message.reply_text("🎤 Распознаю голос…")
+
+    tmp_path = None
+    try:
+        tmp_path = await _download_media_to_temp(file_id, suffix, context)
+        actual_size = os.path.getsize(tmp_path)
+        if actual_size > WHISPER_MAX_BYTES:
+            await status.edit_text(VOICE_TOO_LARGE_TEXT)
+            return
+        transcript = await _transcribe_audio(tmp_path)
+    except asyncio.TimeoutError:
+        logger.error("Таймаут Whisper для %s (%s, %ss)", user_id, kind, duration)
+        await status.edit_text(VOICE_FAILED_TEXT)
+        return
+    except Exception:
+        logger.exception("Ошибка распознавания голоса для %s (%s)", user_id, kind)
+        try:
+            await status.edit_text(VOICE_FAILED_TEXT)
+        except Exception:
+            await update.message.reply_text(VOICE_FAILED_TEXT)
+        return
+    finally:
+        _safe_unlink(tmp_path)
+
+    if not transcript:
+        await status.edit_text(VOICE_EMPTY_TEXT)
+        return
+
+    logger.info("Голос от %s (%s, %ss): %r", user_id, kind, duration, transcript[:80])
+    preview = _format_transcript_preview(transcript)
+    await status.edit_text(f"🎤 «{preview}»")
+    await _process_user_text(update, context, transcript)
+
+
 # ================== КОМАНДЫ ПД ==================
 async def privacy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает политику конфиденциальности."""
@@ -2960,6 +3121,7 @@ def main() -> None:
     application.add_handler(CommandHandler("report", report_command))
     application.add_handler(CommandHandler("clearcache", clearcache_command))
     application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(MessageHandler(filters.VOICE | filters.VIDEO_NOTE | filters.AUDIO, handle_voice))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     if ADMIN_USER_ID and application.job_queue:
